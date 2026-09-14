@@ -1,40 +1,24 @@
 # vsvibe
 
-Browse changed files in the **Review** activity-bar sidebar. Select a file row to open its VS Code diff editor, or use the row’s **Open File** icon to open the file directly. Deleted files open their previous contents. Use **Review Scope** dropdown in the view toolbar to choose Uncommitted, Unstaged, Staged, or Branch. A checkmark marks the active option; the current mode appears beside the view title.
+vsvibe aims to turn VS Code into an AI code reviewing tool, with reviewing changes as the primary workflow.
 
-- **Branch** (initial selection): net changes from the merge base with the default branch to the current working tree, including committed, staged, unstaged, and untracked files. On the default branch, this shows uncommitted changes relative to HEAD; before the first commit, existing files appear as additions.
-- **Unstaged**: changes from the index to the working tree, including untracked files. The left side of the diff uses the staged content.
-- **Staged**: changes from HEAD to the index. The right side uses staged content, excluding any later working-tree edits.
-- **Uncommitted**: net changes from HEAD to the working tree, including staged, unstaged, and untracked files. Before the first commit, existing files appear as additions.
+Today, the Review sidebar brings your file changes together so you can inspect them in one place.
 
-The three-dot **More Actions** menu contains Refresh, View as Tree, and View as List. List is the default; the layout selection persists per workspace. Tree groups files by folder and separates repositories at the root. Both layouts show native file icons and right-aligned Git status badges. Renames compare the original path with the new path; added and deleted files use an empty side of the diff. Conflicts are marked U. Ignored files are excluded. Unsaved editor changes are not included in the Git file list until saved.
+Open **Review** and select a file to see its diff. Use the **Open File** button beside an entry to open the file directly.
 
-The selected mode persists per workspace. Changes refresh on Git state and file events, when the panel becomes visible, or with its Refresh button. Multiple repositories appear in the same list with repository labels.
+Choose what to review from the scope dropdown:
 
-Default-branch detection uses locally available remote HEAD refs (origin first), then local main or master. Set `vsvibe.defaultBranch` to a ref such as `upstream/trunk` if needed. Comparisons do not fetch from the network. With a detached HEAD or no known default branch, Branch mode falls back to uncommitted changes relative to HEAD.
+- **Branch**: changes on your branch, including uncommitted edits.
+- **Uncommitted**: all changes you haven’t committed yet.
+- **Unstaged**: changes you haven’t staged yet, including new files.
+- **Staged**: changes ready for your next commit.
 
-## Development
+Use the three-dot menu to switch between a flat list and a folder tree, or refresh manually. Review updates automatically as you save files and change their Git status, and remembers your scope and layout for each workspace.
 
-Requires Node.js 24+, pnpm 12.3.4, and optionally [just](https://github.com/casey/just).
+Review changes in a flat list and open a diff beside it.
 
-```sh
-pnpm install
-pnpm check
-pnpm build
-```
+![Review list with a file diff](docs/screenshots/review-list.png)
 
-Open this directory in VS Code, install the recommended workspace extensions, and press F5 to launch an Extension Development Host. Click the Review activity-bar icon to open the sidebar. `pnpm watch` continuously rebuilds the source.
+Switch to a folder tree to see where each changed file belongs.
 
-## Commands
-
-Run `just` to list recipes. Each recipe delegates to the matching pnpm script, including `build`, `watch`, `lint`, `format`, `typecheck`, `test`, `check`, and `package`. `just fix` applies lint fixes and formatting; `just clean` removes compiled output.
-
-TypeScript 7 compiles source to CommonJS in `dist/` with source maps. Oxlint checks code. Oxfmt formats its supported languages, including JSON, YAML, and Markdown. Prettier handles remaining recognized files using `.prettier-fallback-ignore` to avoid overlapping with Oxfmt. Install a Prettier plugin and configure it when adding a language that needs one; update formatter routing and ignore patterns alongside it. Neither formatter formats the justfile.
-
-Lefthook installs during `pnpm install`. Pre-commit runs lint, formatting checks, and type checking; pre-push compiles. Run `pnpm hooks` to reinstall hooks. Hooks check files without modifying or staging them.
-
-## Packaging and CI
-
-`pnpm package` builds a local VSIX. `pnpm test` exercises real temporary Git repositories, including branch comparisons, renames, deletions, conflicts, untracked files, and default-branch detection. GitHub Actions runs quality checks and packages an artifact on pushes and pull requests. No publishing is configured.
-
-Before publishing, set a Marketplace publisher, repository, description, and license in the manifest. Packaging excludes development files and source maps. There are no runtime dependencies; if those are added, bundle them or revise the packaging configuration before distributing the extension.
+![Review folder tree with a file diff](docs/screenshots/review-tree.png)
