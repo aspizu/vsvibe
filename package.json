@@ -1,0 +1,525 @@
+{
+  "name": "vsvibe",
+  "displayName": "vsvibe",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Browse branch and uncommitted changes in the sidebar and open file diffs.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aspizu/vsvibe.git"
+  },
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write . && pnpm format:prettier --write",
+    "format:check": "oxfmt --check . && pnpm format:prettier --check",
+    "format:prettier": "prettier . --ignore-path .prettierignore --ignore-path .prettier-fallback-ignore --ignore-unknown",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
+    "hooks": "lefthook install",
+    "prepare": "lefthook install",
+    "vscode:prepublish": "pnpm build",
+    "package": "vsce package --readme-path README.vscode.md --no-dependencies --allow-missing-repository --skip-license",
+    "test": "pnpm build && node --test test/*.test.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@types/vscode": "1.110.0",
+    "@vscode/vsce": "3.9.2",
+    "lefthook": "2.1.12",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsvibe",
+          "title": "Review",
+          "icon": "$(multi-diff-editor-label-icon)"
+        }
+      ]
+    },
+    "views": {
+      "vsvibe": [
+        {
+          "id": "vsvibe.changes",
+          "name": "Review",
+          "icon": "$(multi-diff-editor-label-icon)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vsvibe.findFile",
+        "title": "Find Review File",
+        "icon": "$(search)",
+        "enablement": "vsvibe.ready && !vsvibe.empty && !vsvibe.loading"
+      },
+      {
+        "command": "vsvibe.openAllDiffs",
+        "title": "Open All Diffs",
+        "icon": "$(eye)",
+        "enablement": "vsvibe.ready && !vsvibe.empty && !vsvibe.loading"
+      },
+      {
+        "command": "vsvibe.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsvibe.loading",
+        "title": "Refreshing Review",
+        "icon": "$(loading~spin)",
+        "enablement": "false"
+      },
+      {
+        "command": "vsvibe.scope.uncommitted",
+        "title": "Uncommitted"
+      },
+      {
+        "command": "vsvibe.scope.uncommitted.selected",
+        "title": "✓ Uncommitted"
+      },
+      {
+        "command": "vsvibe.scope.unstaged",
+        "title": "Unstaged"
+      },
+      {
+        "command": "vsvibe.scope.unstaged.selected",
+        "title": "✓ Unstaged"
+      },
+      {
+        "command": "vsvibe.scope.staged",
+        "title": "Staged"
+      },
+      {
+        "command": "vsvibe.scope.staged.selected",
+        "title": "✓ Staged"
+      },
+      {
+        "command": "vsvibe.scope.branch",
+        "title": "Branch"
+      },
+      {
+        "command": "vsvibe.scope.branch.selected",
+        "title": "✓ Branch"
+      },
+      {
+        "command": "vsvibe.layout.tree",
+        "title": "View as Tree"
+      },
+      {
+        "command": "vsvibe.layout.tree.selected",
+        "title": "✓ View as Tree"
+      },
+      {
+        "command": "vsvibe.layout.list",
+        "title": "View as List"
+      },
+      {
+        "command": "vsvibe.layout.list.selected",
+        "title": "✓ View as List"
+      },
+      {
+        "command": "vsvibe.openFile",
+        "title": "Open File",
+        "icon": {
+          "light": "media/open-file-light.svg",
+          "dark": "media/open-file-dark.svg"
+        }
+      },
+      {
+        "command": "vsvibe.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "vsvibe.copyRelativePath",
+        "title": "Copy Relative Path"
+      },
+      {
+        "command": "vsvibe.revealInFinder",
+        "title": "Reveal in Finder"
+      },
+      {
+        "command": "vsvibe.revealInFileExplorer",
+        "title": "Reveal in File Explorer"
+      },
+      {
+        "command": "vsvibe.revealInFileManager",
+        "title": "Reveal in File Manager"
+      },
+      {
+        "command": "vsvibe.revealInExplorer",
+        "title": "Reveal in Explorer View"
+      },
+      {
+        "command": "vsvibe.sort.name",
+        "title": "Sort by Name"
+      },
+      {
+        "command": "vsvibe.sort.name.selected",
+        "title": "✓ Sort by Name"
+      },
+      {
+        "command": "vsvibe.sort.status",
+        "title": "Sort by Status"
+      },
+      {
+        "command": "vsvibe.sort.status.selected",
+        "title": "✓ Sort by Status"
+      },
+      {
+        "command": "vsvibe.scope.lastTurn",
+        "title": "Last Turn"
+      },
+      {
+        "command": "vsvibe.scope.lastTurn.selected",
+        "title": "✓ Last Turn"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vsvibe.findFile",
+        "key": "cmd+r",
+        "when": "isMac && vsvibe.ready && !vsvibe.empty && !vsvibe.loading"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "submenu": "vsvibe.scope",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.openAllDiffs",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vsvibe.findFile",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@3"
+        },
+        {
+          "command": "vsvibe.loading",
+          "when": "view == vsvibe.changes && vsvibe.loading",
+          "group": "navigation@4"
+        },
+        {
+          "submenu": "vsvibe.options",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@5"
+        }
+      ],
+      "vsvibe.scope": [
+        {
+          "command": "vsvibe.scope.uncommitted",
+          "when": "vsvibe.scope != uncommitted",
+          "group": "1_local@0"
+        },
+        {
+          "command": "vsvibe.scope.uncommitted.selected",
+          "when": "vsvibe.scope == uncommitted",
+          "group": "1_local@0"
+        },
+        {
+          "command": "vsvibe.scope.unstaged",
+          "when": "vsvibe.scope != unstaged",
+          "group": "1_local@1"
+        },
+        {
+          "command": "vsvibe.scope.unstaged.selected",
+          "when": "vsvibe.scope == unstaged",
+          "group": "1_local@1"
+        },
+        {
+          "command": "vsvibe.scope.staged",
+          "when": "vsvibe.scope != staged",
+          "group": "1_local@2"
+        },
+        {
+          "command": "vsvibe.scope.staged.selected",
+          "when": "vsvibe.scope == staged",
+          "group": "1_local@2"
+        },
+        {
+          "command": "vsvibe.scope.branch",
+          "when": "vsvibe.scope != branch",
+          "group": "2_branch@3"
+        },
+        {
+          "command": "vsvibe.scope.branch.selected",
+          "when": "vsvibe.scope == branch",
+          "group": "2_branch@3"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn",
+          "when": "vsvibe.scope != lastTurn",
+          "group": "0_lastTurn"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn.selected",
+          "when": "vsvibe.scope == lastTurn",
+          "group": "0_lastTurn"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vsvibe.revealInFinder",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.revealInFileExplorer",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.revealInFileManager",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.copyRelativePath",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.loading",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.uncommitted",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.uncommitted.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.unstaged",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.unstaged.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.staged",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.staged.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.branch",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.branch.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.layout.tree",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.layout.tree.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.layout.list",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.layout.list.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.openFile",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.name",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.name.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.status",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.status.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn.selected",
+          "when": "false"
+        }
+      ],
+      "vsvibe.options": [
+        {
+          "command": "vsvibe.refresh",
+          "group": "1_refresh",
+          "when": "!vsvibe.loading"
+        },
+        {
+          "command": "vsvibe.loading",
+          "group": "1_refresh",
+          "when": "vsvibe.loading"
+        },
+        {
+          "command": "vsvibe.layout.tree",
+          "when": "vsvibe.layout != tree",
+          "group": "2_layout@0"
+        },
+        {
+          "command": "vsvibe.layout.tree.selected",
+          "when": "vsvibe.layout == tree",
+          "group": "2_layout@0"
+        },
+        {
+          "command": "vsvibe.layout.list",
+          "when": "vsvibe.layout != list",
+          "group": "2_layout@1"
+        },
+        {
+          "command": "vsvibe.layout.list.selected",
+          "when": "vsvibe.layout == list",
+          "group": "2_layout@1"
+        },
+        {
+          "command": "vsvibe.sort.name",
+          "when": "vsvibe.sort != name",
+          "group": "3_sort@0"
+        },
+        {
+          "command": "vsvibe.sort.name.selected",
+          "when": "vsvibe.sort == name",
+          "group": "3_sort@0"
+        },
+        {
+          "command": "vsvibe.sort.status",
+          "when": "vsvibe.sort != status",
+          "group": "3_sort@1"
+        },
+        {
+          "command": "vsvibe.sort.status.selected",
+          "when": "vsvibe.sort == status",
+          "group": "3_sort@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vsvibe.revealInFinder",
+          "when": "view == vsvibe.changes && viewItem == reviewFile && isMac",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.revealInFileExplorer",
+          "when": "view == vsvibe.changes && viewItem == reviewFile && isWindows",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.revealInFileManager",
+          "when": "view == vsvibe.changes && viewItem == reviewFile && isLinux",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.revealInExplorer",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vsvibe.copyPath",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "clipboard@1"
+        },
+        {
+          "command": "vsvibe.copyRelativePath",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "clipboard@2"
+        },
+        {
+          "command": "vsvibe.openFile",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "inline@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "vsvibe",
+      "properties": {
+        "vsvibe.defaultBranch": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Default branch ref for Branch comparisons, such as origin/main. When empty, use the remote default branch (origin first), then local main or master."
+        }
+      }
+    },
+    "submenus": [
+      {
+        "id": "vsvibe.scope",
+        "label": "Review Scope",
+        "icon": "$(chevron-down)"
+      },
+      {
+        "id": "vsvibe.options",
+        "label": "More Actions",
+        "icon": "$(ellipsis)"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "vsvibe.changes",
+        "contents": "",
+        "when": "!vsvibe.ready"
+      },
+      {
+        "view": "vsvibe.changes",
+        "contents": "No file changes yet",
+        "when": "vsvibe.empty && !vsvibe.loading"
+      }
+    ]
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "engines": {
+    "node": ">=24",
+    "vscode": "^1.110.0"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  }
+}

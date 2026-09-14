@@ -1,0 +1,85 @@
+name: Release VSIX
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: vsix-build-main
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm package --out dist/vsvibe.vsix
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vsix
+          path: dist/vsvibe.vsix
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: vsix-release-latest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: vsix
+      - name: Update the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          if [[ "$GITHUB_SHA" != "$head_sha" ]]; then
+            echo "Skipping superseded commit $GITHUB_SHA."
+            exit 0
+          fi
+
+          cat > release-notes.md <<EOF
+          Latest successful build of main: [$GITHUB_SHA](https://github.com/$GH_REPO/commit/$GITHUB_SHA).
+
+          Download **vsvibe.vsix**, then run **Extensions: Install from VSIX...** from the VS Code Command Palette.
+
+          This rolling release is replaced after successful builds of main. Requires VS Code 1.110 or later and Git.
+          EOF
+
+          tag_count=$(gh api "repos/$GH_REPO/git/matching-refs/tags/latest" --jq '[.[] | select(.ref == "refs/tags/latest")] | length')
+          if [[ "$tag_count" == 0 ]]; then
+            gh api --method POST "repos/$GH_REPO/git/refs" -f ref=refs/tags/latest -f sha="$GITHUB_SHA"
+          else
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true
+          fi
+
+          release_id=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.tag_name == "latest") | .id')
+          if [[ -n "$release_id" ]]; then
+            gh release upload latest vsvibe.vsix --clobber
+            gh release edit latest --title "Latest build" --notes-file release-notes.md --latest
+          else
+            gh release create latest vsvibe.vsix --verify-tag --title "Latest build" --notes-file release-notes.md --latest
+          fi

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">vsvibe</title>
+  <desc id="desc">Coral and mint diff panels form a V on a deep indigo background.</desc>
+  <defs>
+    <linearGradient id="background" x1="24" y1="0" x2="232" y2="256" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#25284D"/>
+      <stop offset="1" stop-color="#101225"/>
+    </linearGradient>
+    <linearGradient id="removed" x1="62" y1="52" x2="118" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB08E"/>
+      <stop offset="1" stop-color="#FF668A"/>
+    </linearGradient>
+    <linearGradient id="added" x1="138" y1="52" x2="194" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5FFE0"/>
+      <stop offset="1" stop-color="#38CDBE"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#background)"/>
+  <rect x="1" y="1" width="254" height="254" rx="55" stroke="#FFFFFF" stroke-opacity=".08" stroke-width="2"/>
+  <g transform="rotate(-24 90 126)">
+    <rect x="62" y="52" width="56" height="148" rx="18" fill="url(#removed)"/>
+    <path d="M79 83h22" stroke="#442A45" stroke-width="7" stroke-linecap="round"/>
+    <path d="M79 116h22M79 132h22M79 148h13" stroke="#442A45" stroke-opacity=".3" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <g transform="rotate(24 166 126)">
+    <rect x="138" y="52" width="56" height="148" rx="18" fill="url(#added)"/>
+    <path d="M155 83h22M166 72v22" stroke="#174448" stroke-width="7" stroke-linecap="round"/>
+    <path d="M155 116h22M155 132h22M155 148h13" stroke="#174448" stroke-opacity=".3" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>
