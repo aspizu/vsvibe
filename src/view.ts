@@ -40,6 +40,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private readonly openingDiffs = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
+  private selectedId: string | undefined;
   private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -152,6 +153,20 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     return this.layout === "tree" ? this.tree : [...this.entries.values()];
   }
 
+  getParent(element: ReviewNode): ReviewNode | undefined {
+    if (this.layout !== "tree") return undefined;
+    const find = (nodes: ReviewNode[]): ReviewNode | undefined => {
+      for (const node of nodes) {
+        if (!("children" in node)) continue;
+        if (node.children.includes(element)) return node;
+        const parent = find(node.children);
+        if (parent) return parent;
+      }
+      return undefined;
+    };
+    return find(this.tree);
+  }
+
   async setLayout(layout: Layout): Promise<void> {
     if (layout === this.layout) return;
     this.layout = layout;
@@ -208,6 +223,13 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     if (this.disposed || !this.git) return;
     const generation = ++this.generation;
     const mode = this.mode;
+    const selected = this.view.selection[0];
+    if (selected && !("children" in selected)) {
+      this.selectedId = vscode.Uri.joinPath(
+        vscode.Uri.file(selected.repository.root),
+        selected.path,
+      ).toString();
+    }
     this.entries.clear();
     this.tree = [];
     this.view.title = this.modeLabel;
@@ -274,6 +296,12 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     if (this.disposed || generation !== this.generation) return;
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
+    const selected = this.selectedId ? entries.get(this.selectedId) : undefined;
+    if (selected) {
+      await this.view.reveal(selected, { select: true, focus: false, expand: false });
+    } else {
+      this.selectedId = undefined;
+    }
   }
 
   private snapshot(path: string, content: string, identity: string): vscode.Uri {
@@ -308,7 +336,10 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
           JSON.stringify([id, entry.mode, entry.base, "file"]),
         );
       }
-      await vscode.commands.executeCommand("vscode.open", uri, { preview: true });
+      await vscode.commands.executeCommand("vscode.open", uri, {
+        preview: true,
+        preserveFocus: true,
+      });
     } catch (error) {
       await vscode.window.showErrorMessage(`Could not open file: ${errorMessage(error)}`);
     }
@@ -362,9 +393,12 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       active.modified.toString() === right.toString()
     )
       return;
-    const title = `${originalPath === path ? path : `${originalPath} → ${path}`} (${scopeLabels[mode]})`;
+    const title = `${basename(path)} (${scopeLabels[mode]})`;
     try {
-      await vscode.commands.executeCommand("vscode.diff", left, right, title, { preview: true });
+      await vscode.commands.executeCommand("vscode.diff", left, right, title, {
+        preview: true,
+        preserveFocus: true,
+      });
     } catch (error) {
       this.snapshots.delete(left.toString());
       if (right.scheme === "vsvibe-diff") this.snapshots.delete(right.toString());

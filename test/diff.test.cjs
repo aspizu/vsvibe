@@ -12,6 +12,7 @@ function fixture(mode = "branch", status = "M") {
     path,
   });
   const calls = [];
+  const titles = [];
   const group = {};
   class TabInputTextDiff {
     constructor(original, modified) {
@@ -31,9 +32,11 @@ function fixture(mode = "branch", status = "M") {
       showErrorMessage: (message) => assert.fail(message),
     },
     commands: {
-      executeCommand: async (command, left, right) => {
+      executeCommand: async (command, left, right, title, options) => {
         assert.equal(command, "vscode.diff");
+        assert.equal(options.preserveFocus, true);
         calls.push([left.toString(), right.toString()]);
+        titles.push(title);
         group.activeTab = { input: new TabInputTextDiff(left, right) };
       },
     },
@@ -73,6 +76,7 @@ function fixture(mode = "branch", status = "M") {
   return {
     view,
     calls,
+    titles,
     group,
     setIndex: (value) => {
       index = value;
@@ -113,4 +117,14 @@ test("changed staged content opens an updated diff", async () => {
   await view.openDiff("file");
   assert.equal(calls.length, 2);
   assert.notEqual(calls[0][1], calls[1][1]);
+});
+
+test("nested and renamed files use only the destination filename in the tab title", async () => {
+  const { view, titles } = fixture("branch", "R");
+  Object.assign(view.entries.get("file"), {
+    path: "src/components/new-name.ts",
+    originalPath: "src/legacy/old-name.ts",
+  });
+  await view.openDiff("file");
+  assert.equal(titles[0], "new-name.ts (Branch)");
 });
