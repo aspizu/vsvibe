@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-export type Mode = "uncommitted" | "branch";
+export const scopeLabels = {
+  uncommitted: "Uncommitted",
+  unstaged: "Unstaged",
+  staged: "Staged",
+  branch: "Branch",
+} as const;
+export type Mode = keyof typeof scopeLabels;
 export interface Change {
   path: string;
   originalPath: string;
@@ -93,37 +99,17 @@ export class Repository {
 
   async changes(mode: Mode, defaultBranch = ""): Promise<Changes> {
     const branch = (await this.git("branch", "--show-current")).trim();
-    let base = await this.ref("HEAD");
-    if (mode === "branch") {
-      if (!base)
-        return { base, branch, message: "Create the first commit to compare branches.", files: [] };
-      if (!branch)
-        return {
-          base,
-          branch,
-          message: "Check out a branch to compare branch changes.",
-          files: [],
-        };
+    let base = mode === "unstaged" ? ":" : await this.ref("HEAD");
+    if (mode === "branch" && base && branch) {
       const target = await this.defaultBranch(defaultBranch);
-      if (!target)
-        return {
-          base,
-          branch,
-          message: "Default branch not found. Set vsvibe.defaultBranch in Settings.",
-          files: [],
-        };
-      if (branch === target.name)
-        return {
-          base,
-          branch,
-          message: "On the default branch. Select Uncommitted to see local changes.",
-          files: [],
-        };
-      base = (await this.git("merge-base", "HEAD", target.commit)).trim();
+      // With no branch comparison available, keep HEAD as the local-change base.
+      if (target && branch !== target.name) {
+        base = (await this.git("merge-base", "HEAD", target.commit)).trim();
+      }
     }
 
     const files = new Map<string, Change>();
-    if (base) {
+    if (base || mode === "staged") {
       const fields = (
         await this.git(
           "diff",
@@ -132,7 +118,8 @@ export class Repository {
           "--name-status",
           "-z",
           "--find-renames",
-          base,
+          ...(mode === "staged" ? ["--cached"] : []),
+          ...(mode === "unstaged" || !base ? [] : [base]),
           "--",
         )
       ).split("\0");
@@ -140,7 +127,8 @@ export class Repository {
         const status = fields[index++]?.charAt(0) ?? "M";
         const originalPath = fields[index++];
         const path = status === "R" || status === "C" ? fields[index++] : originalPath;
-        if (path && originalPath) files.set(path, { path, originalPath, status });
+        if (path && originalPath && !(mode === "staged" && status === "U"))
+          files.set(path, { path, originalPath, status });
       }
     } else {
       // An unborn branch has no HEAD; every existing index entry is an addition.
@@ -161,6 +149,7 @@ export class Repository {
       const code = record.slice(0, 2);
       const path = record.slice(3);
       if (/[RC]/.test(code)) index++;
+      if (mode === "staged") continue;
       if (code === "??") {
         // A staged deletion restored on disk is untracked, but may exist in the base.
         const previous = files.get(path);
@@ -177,7 +166,19 @@ export class Repository {
     };
   }
 
+  async indexContent(path: string): Promise<string> {
+    const entries = (await this.git("ls-files", "--stage", "-z", "--", path))
+      .split("\0")
+      .filter((entry) => entry.slice(entry.indexOf("\t") + 1) === path)
+      .map((entry) => entry.slice(0, entry.indexOf("\t")).split(" "));
+    // During a conflict there is no stage 0; stage 2 is the local side.
+    const entry =
+      entries.find((entry) => entry[2] === "0") ?? entries.find((entry) => entry[2] === "2");
+    return entry?.[1] ? this.git("cat-file", "blob", entry[1]) : "";
+  }
+
   async content(commit: string, path: string): Promise<string> {
+    if (commit === ":") return this.indexContent(path);
     // Conflicts can introduce a file absent from the selected base.
     if (!(await this.git("ls-tree", "-z", commit, "--", path))) return "";
     return this.git("show", `${commit}:${path}`);

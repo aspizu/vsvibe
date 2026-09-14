@@ -88,11 +88,10 @@ test("branch includes commits and local changes without unrelated default-branch
   );
 });
 
-test("default branch has no Branch entries but shows uncommitted entries", async (t) => {
+test("default branch includes uncommitted entries in Branch mode", async (t) => {
   const f = fixture(t);
   f.write("modified.txt", "local\n");
-  assert.match((await f.repo.changes("branch")).message, /default branch/);
-  assert.deepEqual((await f.repo.changes("branch")).files, []);
+  assert.deepEqual(statuses(await f.repo.changes("branch")), { "modified.txt": "M" });
   assert.equal((await f.repo.changes("uncommitted")).files.length, 1);
 });
 
@@ -105,7 +104,10 @@ test("unborn repository lists staged and untracked files", async (t) => {
     "staged.txt": "A",
     "untracked.txt": "A",
   });
-  assert.match((await f.repo.changes("branch")).message, /first commit/);
+  assert.deepEqual(statuses(await f.repo.changes("branch")), {
+    "staged.txt": "A",
+    "untracked.txt": "A",
+  });
 });
 
 test("uses remote HEAD and supports a custom remote default ref", async (t) => {
@@ -113,21 +115,22 @@ test("uses remote HEAD and supports a custom remote default ref", async (t) => {
   f.git("branch", "-m", "trunk");
   f.git("update-ref", "refs/remotes/upstream/trunk", "HEAD");
   f.git("symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/trunk");
-  assert.match((await f.repo.changes("branch")).message, /default branch/);
-  assert.match((await f.repo.changes("branch", "upstream/trunk")).message, /default branch/);
+  assert.deepEqual((await f.repo.changes("branch")).files, []);
+  assert.deepEqual((await f.repo.changes("branch", "upstream/trunk")).files, []);
   f.git("checkout", "-b", "feature");
   f.write("modified.txt", "feature\n");
   f.commit();
   assert.deepEqual(statuses(await f.repo.changes("branch")), { "modified.txt": "M" });
 });
 
-test("missing default branch and detached HEAD produce actionable states", async (t) => {
+test("missing default branch and detached HEAD still show uncommitted changes", async (t) => {
   const f = fixture(t);
   f.git("branch", "-m", "trunk");
-  assert.match((await f.repo.changes("branch")).message, /Default branch not found/);
+  f.write("modified.txt", "local edits\n");
+  assert.deepEqual(statuses(await f.repo.changes("branch")), { "modified.txt": "M" });
   await assert.rejects(f.repo.changes("branch", "missing"), /not found locally/);
   f.git("checkout", "--detach");
-  assert.match((await f.repo.changes("branch")).message, /Check out a branch/);
+  assert.deepEqual(statuses(await f.repo.changes("branch")), { "modified.txt": "M" });
 });
 
 test("restored staged deletion compares to its original base", async (t) => {
@@ -160,4 +163,76 @@ test("working tree changes that undo a branch commit disappear from Branch", asy
   f.write("modified.txt", "original\n");
   assert.deepEqual((await f.repo.changes("branch")).files, []);
   assert.deepEqual(statuses(await f.repo.changes("uncommitted")), { "modified.txt": "M" });
+});
+
+test("staged and unstaged isolate index changes from later working-tree edits", async (t) => {
+  const f = fixture(t);
+  f.write("modified.txt", "staged content\n");
+  f.git("add", "modified.txt");
+  f.write("modified.txt", "unstaged content\n");
+  f.write("untracked.txt", "new\n");
+  const staged = await f.repo.changes("staged");
+  const unstaged = await f.repo.changes("unstaged");
+  assert.deepEqual(statuses(staged), { "modified.txt": "M" });
+  assert.deepEqual(statuses(unstaged), { "modified.txt": "M", "untracked.txt": "A" });
+  assert.equal(await f.repo.content(staged.base, "modified.txt"), "original\n");
+  assert.equal(await f.repo.indexContent("modified.txt"), "staged content\n");
+  assert.equal(await f.repo.content(unstaged.base, "modified.txt"), "staged content\n");
+});
+
+test("staged additions and deletions use the index even when disk differs", async (t) => {
+  const f = fixture(t);
+  f.write("new.txt", "staged addition\n");
+  f.git("add", "new.txt");
+  rmSync(join(f.root, "new.txt"));
+  f.git("rm", "deleted.txt");
+  f.write("deleted.txt", "restored on disk\n");
+  assert.deepEqual(statuses(await f.repo.changes("staged")), {
+    "deleted.txt": "D",
+    "new.txt": "A",
+  });
+  assert.deepEqual(statuses(await f.repo.changes("unstaged")), {
+    "deleted.txt": "A",
+    "new.txt": "D",
+  });
+  assert.equal(await f.repo.indexContent("new.txt"), "staged addition\n");
+  assert.equal(await f.repo.indexContent("deleted.txt"), "");
+});
+
+test("staged renames compare original HEAD content with renamed index content", async (t) => {
+  const f = fixture(t);
+  f.git("mv", "rename me.txt", "new ü\tname.txt");
+  f.write("new ü\tname.txt", "changed after rename\n");
+  const staged = await f.repo.changes("staged");
+  assert.deepEqual(statuses(staged), { "new ü\tname.txt": "R" });
+  assert.equal(staged.files[0].originalPath, "rename me.txt");
+  assert.equal(await f.repo.indexContent("new ü\tname.txt"), "rename me\n");
+  assert.deepEqual(statuses(await f.repo.changes("unstaged")), { "new ü\tname.txt": "M" });
+});
+
+test("staged and unstaged scopes work before the first commit", async (t) => {
+  const f = fixture(t, false);
+  f.write("staged.txt", "index\n");
+  f.git("add", ".");
+  f.write("staged.txt", "worktree\n");
+  f.write("untracked.txt", "new\n");
+  assert.deepEqual(statuses(await f.repo.changes("staged")), { "staged.txt": "A" });
+  assert.deepEqual(statuses(await f.repo.changes("unstaged")), {
+    "staged.txt": "M",
+    "untracked.txt": "A",
+  });
+});
+
+test("unresolved conflicts belong to Unstaged rather than Staged", async (t) => {
+  const f = fixture(t);
+  f.git("checkout", "-b", "feature");
+  f.write("modified.txt", "feature\n");
+  f.commit();
+  f.git("checkout", "main");
+  f.write("modified.txt", "main\n");
+  f.commit();
+  assert.throws(() => f.git("merge", "feature"));
+  assert.deepEqual((await f.repo.changes("staged")).files, []);
+  assert.deepEqual(statuses(await f.repo.changes("unstaged")), { "modified.txt": "U" });
+  assert.equal(await f.repo.indexContent("modified.txt"), "main\n");
 });
