@@ -1,0 +1,34 @@
+# Oxfmt owns these formats. This is separate from .prettierignore,
+# which Oxfmt also reads. Configure plugins for additional fallback formats.
+*.js
+*.jsx
+*.mjs
+*.cjs
+*.ts
+*.tsx
+*.mts
+*.cts
+*.json
+*.jsonc
+*.json5
+*.css
+*.scss
+*.less
+*.pcss
+*.postcss
+*.graphql
+*.gql
+*.graphqls
+*.toml
+*.yml
+*.yaml
+*.html
+*.htm
+*.xhtml
+*.vue
+*.md
+*.markdown
+*.mdx
+*.hbs
+*.handlebars
+*.mjml

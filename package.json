@@ -1,0 +1,184 @@
+{
+  "name": "vsvibe",
+  "displayName": "vsvibe",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Browse branch and uncommitted changes in the sidebar and open file diffs.",
+  "license": "UNLICENSED",
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write . && pnpm format:prettier --write",
+    "format:check": "oxfmt --check . && pnpm format:prettier --check",
+    "format:prettier": "prettier . --ignore-path .prettierignore --ignore-path .prettier-fallback-ignore --ignore-unknown",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
+    "hooks": "lefthook install",
+    "prepare": "lefthook install",
+    "vscode:prepublish": "pnpm build",
+    "package": "vsce package --no-dependencies --allow-missing-repository --skip-license",
+    "test": "pnpm build && node --test test/*.test.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@types/vscode": "1.110.0",
+    "@vscode/vsce": "3.9.2",
+    "lefthook": "2.1.12",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsvibe",
+          "title": "Review",
+          "icon": "media/changes.svg"
+        }
+      ]
+    },
+    "views": {
+      "vsvibe": [
+        {
+          "id": "vsvibe.changes",
+          "name": "Review"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vsvibe.refresh",
+        "title": "Refresh Review",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vsvibe.scope.uncommitted",
+        "title": "Uncommitted"
+      },
+      {
+        "command": "vsvibe.scope.uncommitted.selected",
+        "title": "✓ Uncommitted"
+      },
+      {
+        "command": "vsvibe.scope.branch",
+        "title": "Branch"
+      },
+      {
+        "command": "vsvibe.scope.branch.selected",
+        "title": "✓ Branch"
+      },
+      {
+        "command": "vsvibe.loading",
+        "title": "Refreshing Review",
+        "icon": "$(loading~spin)",
+        "enablement": "false"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "submenu": "vsvibe.scope",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.refresh",
+          "when": "view == vsvibe.changes && !vsvibe.loading",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vsvibe.loading",
+          "when": "view == vsvibe.changes && vsvibe.loading",
+          "group": "navigation@2"
+        }
+      ],
+      "vsvibe.scope": [
+        {
+          "command": "vsvibe.scope.uncommitted",
+          "when": "vsvibe.scope != uncommitted",
+          "group": "scope@0"
+        },
+        {
+          "command": "vsvibe.scope.uncommitted.selected",
+          "when": "vsvibe.scope == uncommitted",
+          "group": "scope@0"
+        },
+        {
+          "command": "vsvibe.scope.branch",
+          "when": "vsvibe.scope != branch",
+          "group": "scope@1"
+        },
+        {
+          "command": "vsvibe.scope.branch.selected",
+          "when": "vsvibe.scope == branch",
+          "group": "scope@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vsvibe.scope.uncommitted",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.uncommitted.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.branch",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.branch.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.loading",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "vsvibe",
+      "properties": {
+        "vsvibe.defaultBranch": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Default branch ref for Branch comparisons, such as origin/main. When empty, use the remote default branch (origin first), then local main or master."
+        }
+      }
+    },
+    "submenus": [
+      {
+        "id": "vsvibe.scope",
+        "label": "Review Scope",
+        "icon": "$(chevron-down)"
+      }
+    ]
+  },
+  "activationEvents": [],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "engines": {
+    "node": ">=24",
+    "vscode": "^1.110.0"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  }
+}
