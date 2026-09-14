@@ -57,7 +57,6 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       showCollapseAll: false,
     });
     this.view.title = this.modeLabel;
-    this.view.description = "";
     void vscode.commands.executeCommand("setContext", "vsvibe.scope", this.mode);
     this.subscriptions.push(
       this.view,
@@ -250,7 +249,6 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.entries.clear();
     this.tree = [];
     this.view.title = this.modeLabel;
-    this.view.description = "";
     this.view.message = "";
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
@@ -303,7 +301,6 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     }
     this.entries = entries;
     this.tree = buildTree([...entries.values()], this.sortOrder);
-    this.view.description = `${entries.size}`;
     this.view.message = messages.join("\n");
     await vscode.commands.executeCommand(
       "setContext",
