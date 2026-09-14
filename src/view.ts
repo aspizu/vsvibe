@@ -3,7 +3,7 @@ import { basename, dirname } from "node:path";
 import { stat } from "node:fs/promises";
 import * as vscode from "vscode";
 import type { GitAPI } from "./git-api";
-import { buildTree, type Folder, type Layout } from "./tree";
+import { buildTree, compareStatus, type Folder, type Layout, type SortOrder } from "./tree";
 import { Repository, scopeLabels, type Change, type Mode } from "./git";
 
 const statusDetails: Record<string, { label: string; color: string }> = {
@@ -31,6 +31,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private readonly decorationsChanged = new vscode.EventEmitter<undefined>();
   private mode: Mode;
   private layout: Layout;
+  private sortOrder: SortOrder;
   private tree: ReviewNode[] = [];
   private git: GitAPI | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -44,6 +45,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.sortOrder =
+      context.workspaceState.get<SortOrder>("changes.sort") === "status" ? "status" : "name";
+    void vscode.commands.executeCommand("setContext", "vsvibe.sort", this.sortOrder);
     this.layout = context.workspaceState.get<Layout>("changes.layout") === "tree" ? "tree" : "list";
     void vscode.commands.executeCommand("setContext", "vsvibe.layout", this.layout);
     const savedMode = context.workspaceState.get<Mode>("changes.mode");
@@ -150,7 +154,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
 
   getChildren(element?: ReviewNode): ReviewNode[] {
     if (element) return "children" in element ? element.children : [];
-    return this.layout === "tree" ? this.tree : [...this.entries.values()];
+    if (this.layout === "tree") return this.tree;
+    const entries = [...this.entries.values()];
+    return this.sortOrder === "status" ? entries.sort(compareStatus) : entries;
   }
 
   getParent(element: ReviewNode): ReviewNode | undefined {
@@ -165,6 +171,17 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       return undefined;
     };
     return find(this.tree);
+  }
+
+  async setSort(order: SortOrder): Promise<void> {
+    if (order === this.sortOrder) return;
+    this.sortOrder = order;
+    this.tree = buildTree([...this.entries.values()], order);
+    this.changed.fire();
+    await Promise.all([
+      vscode.commands.executeCommand("setContext", "vsvibe.sort", order),
+      this.context.workspaceState.update("changes.sort", order),
+    ]);
   }
 
   async setLayout(layout: Layout): Promise<void> {
@@ -285,7 +302,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       }
     }
     this.entries = entries;
-    this.tree = buildTree([...entries.values()]);
+    this.tree = buildTree([...entries.values()], this.sortOrder);
     this.view.description = `${entries.size}`;
     this.view.message = messages.join("\n");
     await vscode.commands.executeCommand(

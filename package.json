@@ -121,6 +121,22 @@
           "light": "media/open-file-light.svg",
           "dark": "media/open-file-dark.svg"
         }
+      },
+      {
+        "command": "vsvibe.sort.name",
+        "title": "Sort by Name"
+      },
+      {
+        "command": "vsvibe.sort.name.selected",
+        "title": "✓ Sort by Name"
+      },
+      {
+        "command": "vsvibe.sort.status",
+        "title": "Sort by Status"
+      },
+      {
+        "command": "vsvibe.sort.status.selected",
+        "title": "✓ Sort by Status"
       }
     ],
     "menus": {
@@ -239,6 +255,22 @@
         {
           "command": "vsvibe.openFile",
           "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.name",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.name.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.status",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.sort.status.selected",
+          "when": "false"
         }
       ],
       "vsvibe.options": [
@@ -271,6 +303,26 @@
           "command": "vsvibe.layout.list.selected",
           "when": "vsvibe.layout == list",
           "group": "2_layout@1"
+        },
+        {
+          "command": "vsvibe.sort.name",
+          "when": "vsvibe.sort != name",
+          "group": "3_sort@0"
+        },
+        {
+          "command": "vsvibe.sort.name.selected",
+          "when": "vsvibe.sort == name",
+          "group": "3_sort@0"
+        },
+        {
+          "command": "vsvibe.sort.status",
+          "when": "vsvibe.sort != status",
+          "group": "3_sort@1"
+        },
+        {
+          "command": "vsvibe.sort.status.selected",
+          "when": "vsvibe.sort == status",
+          "group": "3_sort@1"
         }
       ],
       "view/item/context": [

@@ -35,3 +35,23 @@ test("tree separates matching paths across repositories", () => {
 });
 
 test("empty input stays empty", () => assert.deepEqual(buildTree([]), []));
+
+test("status sorting groups badges and uses paths to break ties", () => {
+  const { compareStatus } = require("../dist/tree.js");
+  const files = [
+    { path: "a.ts", status: "M", repository: { root: "/repo" } },
+    { path: "z.ts", status: "A", repository: { root: "/repo" } },
+    { path: "b.ts", status: "M", repository: { root: "/repo" } },
+    { path: "nested/deleted.ts", status: "D", repository: { root: "/repo" } },
+  ];
+  assert.deepEqual(
+    [...files].sort(compareStatus).map((file) => file.path),
+    ["z.ts", "nested/deleted.ts", "a.ts", "b.ts"],
+  );
+  const tree = buildTree(files, "status");
+  assert.equal(tree[0].name, "nested");
+  assert.deepEqual(
+    tree.slice(1).map((file) => file.path),
+    ["z.ts", "a.ts", "b.ts"],
+  );
+});
