@@ -157,6 +157,10 @@
       {
         "command": "vsvibe.revealInExplorer",
         "title": "Reveal in Explorer View"
+      },
+      {
+        "command": "vsvibe.copyPath",
+        "title": "Copy Path"
       }
     ],
     "menus": {
@@ -234,6 +238,10 @@
         },
         {
           "command": "vsvibe.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.copyPath",
           "when": "false"
         },
         {
@@ -387,9 +395,14 @@
           "group": "navigation@2"
         },
         {
+          "command": "vsvibe.copyPath",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "clipboard@1"
+        },
+        {
           "command": "vsvibe.copyRelativePath",
           "when": "view == vsvibe.changes && viewItem == reviewFile",
-          "group": "clipboard"
+          "group": "clipboard@2"
         },
         {
           "command": "vsvibe.openFile",

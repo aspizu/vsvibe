@@ -48,6 +48,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("vsvibe.refresh", () => view.refresh()),
     vscode.commands.registerCommand("vsvibe.openDiff", (id: string) => view.openDiff(id)),
+    vscode.commands.registerCommand(
+      "vsvibe.copyPath",
+      (entry: { path: string; repository: { root: string } }) =>
+        vscode.env.clipboard.writeText(
+          vscode.Uri.joinPath(vscode.Uri.file(entry.repository.root), entry.path).fsPath,
+        ),
+    ),
     vscode.commands.registerCommand("vsvibe.copyRelativePath", (entry: { path: string }) =>
       vscode.env.clipboard.writeText(entry.path),
     ),
