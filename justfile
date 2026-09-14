@@ -34,6 +34,11 @@ check:
 package:
     pnpm package
 
+# Build and install the latest extension in VS Code.
+install-extension:
+    pnpm package --out dist/vsvibe.vsix
+    code --install-extension dist/vsvibe.vsix --force
+
 hooks:
     pnpm hooks
 
