@@ -8,6 +8,7 @@ Open **Review** and select a file to see its diff. Use the **Open File** button 
 
 Choose what to review from the scope dropdown:
 
+- **Last Turn**: recorded changes from the latest completed Codex turn for this workspace. If the session lacks patch data, Review shows that the diff is unavailable.
 - **Branch**: changes on your branch, including uncommitted edits.
 - **Uncommitted**: all changes you haven’t committed yet.
 - **Unstaged**: changes you haven’t staged yet, including new files.

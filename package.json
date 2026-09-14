@@ -123,20 +123,8 @@
         }
       },
       {
-        "command": "vsvibe.sort.name",
-        "title": "Sort by Name"
-      },
-      {
-        "command": "vsvibe.sort.name.selected",
-        "title": "✓ Sort by Name"
-      },
-      {
-        "command": "vsvibe.sort.status",
-        "title": "Sort by Status"
-      },
-      {
-        "command": "vsvibe.sort.status.selected",
-        "title": "✓ Sort by Status"
+        "command": "vsvibe.copyPath",
+        "title": "Copy Path"
       },
       {
         "command": "vsvibe.copyRelativePath",
@@ -159,8 +147,28 @@
         "title": "Reveal in Explorer View"
       },
       {
-        "command": "vsvibe.copyPath",
-        "title": "Copy Path"
+        "command": "vsvibe.sort.name",
+        "title": "Sort by Name"
+      },
+      {
+        "command": "vsvibe.sort.name.selected",
+        "title": "✓ Sort by Name"
+      },
+      {
+        "command": "vsvibe.sort.status",
+        "title": "Sort by Status"
+      },
+      {
+        "command": "vsvibe.sort.status.selected",
+        "title": "✓ Sort by Status"
+      },
+      {
+        "command": "vsvibe.scope.lastTurn",
+        "title": "Last Turn"
+      },
+      {
+        "command": "vsvibe.scope.lastTurn.selected",
+        "title": "✓ Last Turn"
       }
     ],
     "menus": {
@@ -221,6 +229,16 @@
           "command": "vsvibe.scope.branch.selected",
           "when": "vsvibe.scope == branch",
           "group": "2_branch@3"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn",
+          "when": "vsvibe.scope != lastTurn",
+          "group": "0_lastTurn"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn.selected",
+          "when": "vsvibe.scope == lastTurn",
+          "group": "0_lastTurn"
         }
       ],
       "commandPalette": [
@@ -318,6 +336,14 @@
         },
         {
           "command": "vsvibe.sort.status.selected",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.scope.lastTurn.selected",
           "when": "false"
         }
       ],

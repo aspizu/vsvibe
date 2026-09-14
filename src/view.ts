@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname } from "node:path";
 import { stat } from "node:fs/promises";
 import * as vscode from "vscode";
+import { LastTurnReader, sessionsDirectory, type RecordedChange } from "./last-turn";
 import type { GitAPI } from "./git-api";
 import { buildTree, compareStatus, type Folder, type Layout, type SortOrder } from "./tree";
 import { Repository, scopeLabels, type Change, type Mode } from "./git";
@@ -18,6 +19,7 @@ const statusDetails: Record<string, { label: string; color: string }> = {
 
 interface Entry extends Change {
   mode: Mode;
+  recorded?: RecordedChange;
   repository: Repository;
   base: string | undefined;
 }
@@ -38,6 +40,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private readonly repositories = new Map<string, vscode.Disposable>();
   private entries = new Map<string, Entry>();
   private readonly snapshots = new Map<string, string>();
+  private readonly lastTurn = new LastTurnReader();
   private readonly openingDiffs = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
@@ -99,6 +102,19 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       watcher.onDidChange(changed),
       watcher.onDidCreate(changed),
       watcher.onDidDelete(changed),
+    );
+    const sessionsWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(sessionsDirectory), "**/*.jsonl"),
+    );
+    const sessionChanged = () => {
+      if (this.mode === "lastTurn") this.schedule();
+    };
+    this.subscriptions.push(
+      sessionsWatcher,
+      sessionsWatcher.onDidCreate(sessionChanged),
+      sessionsWatcher.onDidChange(sessionChanged),
+      sessionsWatcher.onDidDelete(sessionChanged),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => this.schedule()),
     );
     void vscode.commands.executeCommand("setContext", "vsvibe.loading", true);
     void vscode.commands.executeCommand("setContext", "vsvibe.ready", true);
@@ -236,7 +252,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   }
 
   async refresh(): Promise<void> {
-    if (this.disposed || !this.git) return;
+    if (this.disposed || (!this.git && this.mode !== "lastTurn")) return;
     const generation = ++this.generation;
     const mode = this.mode;
     const selected = this.view.selection[0];
@@ -268,7 +284,37 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     }
   }
 
+  private async loadLastTurn(generation: number): Promise<void> {
+    const folders =
+      vscode.workspace.workspaceFolders?.filter(({ uri }) => uri.scheme === "file") ?? [];
+    const entries = new Map<string, Entry>();
+    const messages: string[] = [];
+    for (const folder of folders) {
+      try {
+        const result = await this.lastTurn.read(folder.uri.fsPath);
+        if (result.message)
+          messages.push(folders.length > 1 ? `${folder.name}: ${result.message}` : result.message);
+        const repository = new Repository(folder.uri.fsPath);
+        for (const file of result.files) {
+          const id = vscode.Uri.joinPath(folder.uri, file.path).toString();
+          entries.set(id, {
+            ...file,
+            repository,
+            mode: "lastTurn",
+            base: undefined,
+            recorded: file,
+          });
+        }
+      } catch (error) {
+        messages.push(`Last Turn unavailable: ${errorMessage(error)}`);
+      }
+    }
+    if (!folders.length) messages.push("Open a workspace folder to see its last Codex turn.");
+    await this.publishChanges(generation, entries, messages);
+  }
+
   private async loadChanges(generation: number, mode: Mode): Promise<void> {
+    if (mode === "lastTurn") return this.loadLastTurn(generation);
     const git = this.git;
     if (!git) return;
     const repositories = git.repositories.filter(
@@ -299,6 +345,15 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         entries.set(id, { ...file, repository, base: changes?.base, mode });
       }
     }
+    await this.publishChanges(generation, entries, messages);
+  }
+
+  private async publishChanges(
+    generation: number,
+    entries: Map<string, Entry>,
+    messages: string[],
+  ): Promise<void> {
+    if (this.disposed || generation !== this.generation) return;
     this.entries = entries;
     this.tree = buildTree([...entries.values()], this.sortOrder);
     this.view.message = messages.join("\n");
@@ -337,8 +392,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       } catch (error) {
         if (!(error instanceof vscode.FileSystemError) || error.code !== "FileNotFound")
           throw error;
-        const content =
-          entry.status === "D" && entry.base
+        const content = entry.recorded
+          ? entry.recorded.before
+          : entry.status === "D" && entry.base
             ? await entry.repository.content(entry.base, entry.originalPath)
             : entry.mode === "staged"
               ? await entry.repository.indexContent(entry.path)
@@ -376,7 +432,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     const entry = this.entries.get(id);
     if (!entry) return;
     const { repository, base, path, originalPath, status, mode } = entry;
-    const content = base && status !== "A" ? await repository.content(base, originalPath) : "";
+    const content =
+      entry.recorded?.before ??
+      (base && status !== "A" ? await repository.content(base, originalPath) : "");
     const identity = JSON.stringify([id, mode, base, originalPath]);
     const left = this.snapshot(originalPath, content, `${identity}:left`);
     const workingUri = vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
@@ -390,8 +448,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
             throw error;
           },
         )));
-    const right =
-      mode === "staged"
+    const right = entry.recorded
+      ? this.snapshot(path, entry.recorded.after, `${identity}:right`)
+      : mode === "staged"
         ? this.snapshot(
             path,
             status === "D" ? "" : await repository.indexContent(path),

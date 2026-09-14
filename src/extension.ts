@@ -5,7 +5,7 @@ import { ChangesView } from "./view";
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const view = new ChangesView(context);
   context.subscriptions.push(view);
-  for (const mode of ["uncommitted", "unstaged", "staged", "branch"] as const) {
+  for (const mode of ["lastTurn", "uncommitted", "unstaged", "staged", "branch"] as const) {
     for (const suffix of ["", ".selected"]) {
       context.subscriptions.push(
         vscode.commands.registerCommand(`vsvibe.scope.${mode}${suffix}`, () => view.setMode(mode)),

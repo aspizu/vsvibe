@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 export const scopeLabels = {
+  lastTurn: "Last Turn",
   uncommitted: "Uncommitted",
   unstaged: "Unstaged",
   staged: "Staged",
@@ -97,7 +98,7 @@ export class Repository {
     return undefined;
   }
 
-  async changes(mode: Mode, defaultBranch = ""): Promise<Changes> {
+  async changes(mode: Exclude<Mode, "lastTurn">, defaultBranch = ""): Promise<Changes> {
     const branch = (await this.git("branch", "--show-current")).trim();
     let base = mode === "unstaged" ? ":" : await this.ref("HEAD");
     if (mode === "branch" && base && branch) {

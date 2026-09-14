@@ -128,3 +128,15 @@ test("nested and renamed files use only the destination filename in the tab titl
   await view.openDiff("file");
   assert.equal(titles[0], "new-name.ts (Branch)");
 });
+
+test("Last Turn uses recorded contents on both sides instead of Git or working files", async () => {
+  const { view, calls, titles } = fixture("lastTurn", "M");
+  const entry = view.entries.get("file");
+  entry.recorded = { before: "before turn\n", after: "after turn\n" };
+  entry.repository.content = async () => assert.fail("Last Turn must not read Git content");
+  await view.openDiff("file");
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].every((uri) => uri.startsWith("vsvibe-diff:")));
+  assert.deepEqual([...view.snapshots.values()], ["before turn\n", "after turn\n"]);
+  assert.equal(titles[0], "file.txt (Last Turn)");
+});
