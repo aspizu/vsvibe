@@ -31,6 +31,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("vsvibe.refresh", () => view.refresh()),
     vscode.commands.registerCommand("vsvibe.openDiff", (id: string) => view.openDiff(id)),
+    vscode.commands.registerCommand("vsvibe.copyRelativePath", (entry: { path: string }) =>
+      vscode.env.clipboard.writeText(entry.path),
+    ),
     vscode.commands.registerCommand(
       "vsvibe.openFile",
       (entry: { path: string; repository: { root: string } }) =>

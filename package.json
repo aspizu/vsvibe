@@ -137,6 +137,10 @@
       {
         "command": "vsvibe.sort.status.selected",
         "title": "✓ Sort by Status"
+      },
+      {
+        "command": "vsvibe.copyRelativePath",
+        "title": "Copy Relative Path"
       }
     ],
     "menus": {
@@ -200,6 +204,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "vsvibe.copyRelativePath",
+          "when": "false"
+        },
         {
           "command": "vsvibe.loading",
           "when": "false"
@@ -326,6 +334,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "vsvibe.copyRelativePath",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "clipboard"
+        },
         {
           "command": "vsvibe.openFile",
           "when": "view == vsvibe.changes && viewItem == reviewFile",
