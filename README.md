@@ -2,4 +2,4 @@
 
 Codex style diff viewer for VSCode
 
-![](./docs/screenshots/screenshot.png)
+![VSVibe diff review with scope selection](./docs/screenshots/screenshot.svg)
