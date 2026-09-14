@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { basename, dirname } from "node:path";
 import { stat } from "node:fs/promises";
 import * as vscode from "vscode";
 import type { GitAPI } from "./git-api";
-import { Repository, type Change, type Mode } from "./git";
+import { buildTree, type Folder, type Layout } from "./tree";
+import { Repository, scopeLabels, type Change, type Mode } from "./git";
 
 const statusDetails: Record<string, { label: string; color: string }> = {
   A: { label: "Added", color: "addedResourceForeground" },
@@ -16,35 +17,42 @@ const statusDetails: Record<string, { label: string; color: string }> = {
 };
 
 interface Entry extends Change {
+  mode: Mode;
   repository: Repository;
   base: string | undefined;
 }
 
-export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Disposable {
-  private readonly view: vscode.TreeView<Entry>;
+type ReviewNode = Entry | Folder<Entry>;
+
+export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.Disposable {
+  private readonly view: vscode.TreeView<ReviewNode>;
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   private readonly decorationsChanged = new vscode.EventEmitter<undefined>();
   private mode: Mode;
+  private layout: Layout;
+  private tree: ReviewNode[] = [];
+  private git: GitAPI | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly repositories = new Map<string, vscode.Disposable>();
   private entries = new Map<string, Entry>();
   private readonly snapshots = new Map<string, string>();
+  private readonly openingDiffs = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
   private disposed = false;
 
-  constructor(
-    private readonly context: vscode.ExtensionContext,
-    private readonly git: GitAPI,
-  ) {
-    this.mode =
-      context.workspaceState.get<Mode>("changes.mode") === "uncommitted" ? "uncommitted" : "branch";
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.layout = context.workspaceState.get<Layout>("changes.layout") === "tree" ? "tree" : "list";
+    void vscode.commands.executeCommand("setContext", "vsvibe.layout", this.layout);
+    const savedMode = context.workspaceState.get<Mode>("changes.mode");
+    this.mode = savedMode && Object.hasOwn(scopeLabels, savedMode) ? savedMode : "branch";
     this.view = vscode.window.createTreeView("vsvibe.changes", {
       treeDataProvider: this,
       showCollapseAll: false,
     });
-    this.view.description = this.modeLabel;
+    this.view.title = this.modeLabel;
+    this.view.description = "";
     void vscode.commands.executeCommand("setContext", "vsvibe.scope", this.mode);
     this.subscriptions.push(
       this.view,
@@ -73,8 +81,6 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
       vscode.workspace.onDidCloseTextDocument((document) => {
         this.snapshots.delete(document.uri.toString());
       }),
-      git.onDidOpenRepository(() => this.syncRepositories()),
-      git.onDidCloseRepository(() => this.syncRepositories()),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("vsvibe.defaultBranch")) this.schedule();
       }),
@@ -90,10 +96,28 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
       watcher.onDidCreate(changed),
       watcher.onDidDelete(changed),
     );
+    void vscode.commands.executeCommand("setContext", "vsvibe.loading", true);
+    void vscode.commands.executeCommand("setContext", "vsvibe.ready", true);
+  }
+
+  initialize(git: GitAPI): void {
+    if (this.disposed) return;
+    this.git = git;
+    this.subscriptions.push(
+      git.onDidOpenRepository(() => this.syncRepositories()),
+      git.onDidCloseRepository(() => this.syncRepositories()),
+    );
     this.syncRepositories();
   }
 
+  async initializationFailed(error: unknown): Promise<void> {
+    if (this.disposed) return;
+    this.view.message = errorMessage(error);
+    await vscode.commands.executeCommand("setContext", "vsvibe.loading", false);
+  }
+
   private syncRepositories(): void {
+    if (!this.git) return;
     const roots = new Set(this.git.repositories.map((repository) => repository.rootUri.toString()));
     for (const [root, subscription] of this.repositories) {
       if (!roots.has(root)) {
@@ -120,23 +144,49 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
   }
 
   private get modeLabel(): string {
-    return this.mode === "branch" ? "Branch" : "Uncommitted";
+    return scopeLabels[this.mode];
   }
 
-  getChildren(element?: Entry): Entry[] {
-    return element ? [] : [...this.entries.values()];
+  getChildren(element?: ReviewNode): ReviewNode[] {
+    if (element) return "children" in element ? element.children : [];
+    return this.layout === "tree" ? this.tree : [...this.entries.values()];
   }
 
-  getTreeItem(entry: Entry): vscode.TreeItem {
+  async setLayout(layout: Layout): Promise<void> {
+    if (layout === this.layout) return;
+    this.layout = layout;
+    this.changed.fire();
+    await Promise.all([
+      vscode.commands.executeCommand("setContext", "vsvibe.layout", layout),
+      this.context.workspaceState.update("changes.layout", layout),
+    ]);
+  }
+
+  getTreeItem(entry: ReviewNode): vscode.TreeItem {
+    if ("children" in entry) {
+      const item = new vscode.TreeItem(entry.name, vscode.TreeItemCollapsibleState.Expanded);
+      item.id = `folder:${JSON.stringify([entry.root, entry.path])}`;
+      item.resourceUri = vscode.Uri.joinPath(vscode.Uri.file(entry.root), entry.path).with({
+        scheme: "vsvibe-folder",
+      });
+      item.iconPath = vscode.ThemeIcon.Folder;
+      item.tooltip = entry.path || entry.root;
+      return item;
+    }
     const uri = vscode.Uri.joinPath(vscode.Uri.file(entry.repository.root), entry.path);
     const item = new vscode.TreeItem(basename(entry.path), vscode.TreeItemCollapsibleState.None);
     item.id = uri.toString();
     // Scope decorations to Review so the built-in Git badges cannot overlap.
     item.resourceUri = uri.with({ scheme: "vsvibe-review" });
     item.iconPath = vscode.ThemeIcon.File;
+    item.contextValue = "reviewFile";
     const directory = dirname(entry.path);
-    const repository = this.git.repositories.length > 1 ? basename(entry.repository.root) : "";
-    item.description = [repository, directory === "." ? "" : directory].filter(Boolean).join(" · ");
+    const repository =
+      (this.git?.repositories.length ?? 0) > 1 ? basename(entry.repository.root) : "";
+    item.description =
+      this.layout === "list"
+        ? [repository, directory === "." ? "" : directory].filter(Boolean).join(" · ")
+        : "";
     const status = statusDetails[entry.status]?.label ?? entry.status;
     item.tooltip = `${entry.originalPath === entry.path ? entry.path : `${entry.originalPath} → ${entry.path}`} (${status})`;
     item.accessibilityInformation = { label: item.tooltip };
@@ -155,16 +205,21 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
   }
 
   async refresh(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposed || !this.git) return;
     const generation = ++this.generation;
     const mode = this.mode;
     this.entries.clear();
-    this.view.description = this.modeLabel;
+    this.tree = [];
+    this.view.title = this.modeLabel;
+    this.view.description = "";
     this.view.message = "";
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
     if (!this.view.visible) return;
-    await vscode.commands.executeCommand("setContext", "vsvibe.loading", true);
+    await Promise.all([
+      vscode.commands.executeCommand("setContext", "vsvibe.empty", false),
+      vscode.commands.executeCommand("setContext", "vsvibe.loading", true),
+    ]);
     try {
       await vscode.window.withProgress({ location: { viewId: "vsvibe.changes" } }, () =>
         this.loadChanges(generation, mode),
@@ -177,12 +232,14 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
   }
 
   private async loadChanges(generation: number, mode: Mode): Promise<void> {
-    const repositories = this.git.repositories.filter(
+    const git = this.git;
+    if (!git) return;
+    const repositories = git.repositories.filter(
       (repository) => repository.rootUri.scheme === "file",
     );
     const results = await Promise.all(
       repositories.map(async ({ rootUri }) => {
-        const repository = new Repository(rootUri.fsPath, this.git.git.path);
+        const repository = new Repository(rootUri.fsPath, git.git.path);
         try {
           const configured = vscode.workspace
             .getConfiguration("vsvibe", rootUri)
@@ -199,41 +256,84 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
     const messages = [];
     for (const { repository, changes, error } of results) {
       const label = basename(repository.root);
-      if (error || changes?.message) messages.push(`${label}: ${error || changes?.message}`);
+      if (error) messages.push(repositories.length > 1 ? `${label}: ${error}` : error);
       for (const file of changes?.files ?? []) {
         const id = vscode.Uri.joinPath(vscode.Uri.file(repository.root), file.path).toString();
-        entries.set(id, { ...file, repository, base: changes?.base });
+        entries.set(id, { ...file, repository, base: changes?.base, mode });
       }
     }
     this.entries = entries;
-    this.view.description = `${this.modeLabel} · ${entries.size}`;
-    this.view.message = repositories.length
-      ? messages.join("\n") || (entries.size ? "" : "No changes.")
-      : "Open a folder with a Git repository to see changes.";
+    this.tree = buildTree([...entries.values()]);
+    this.view.description = `${entries.size}`;
+    this.view.message = messages.join("\n");
+    await vscode.commands.executeCommand(
+      "setContext",
+      "vsvibe.empty",
+      entries.size === 0 && messages.length === 0,
+    );
+    if (this.disposed || generation !== this.generation) return;
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
   }
 
-  private snapshot(path: string, content: string): vscode.Uri {
-    const uri = vscode.Uri.from({ scheme: "vsvibe-diff", path: `/${path}`, query: randomUUID() });
+  private snapshot(path: string, content: string, identity: string): vscode.Uri {
+    const query = createHash("sha256")
+      .update(JSON.stringify([identity, content]))
+      .digest("hex");
+    const uri = vscode.Uri.from({ scheme: "vsvibe-diff", path: `/${path}`, query });
     this.snapshots.set(uri.toString(), content);
     return uri;
   }
 
-  async openDiff(id: string): Promise<void> {
+  async openFile(id: string): Promise<void> {
+    const entry = this.entries.get(id);
+    if (!entry) return;
     try {
-      await this.showDiff(id);
+      let uri = vscode.Uri.joinPath(vscode.Uri.file(entry.repository.root), entry.path);
+      try {
+        await vscode.workspace.fs.stat(uri);
+      } catch (error) {
+        if (!(error instanceof vscode.FileSystemError) || error.code !== "FileNotFound")
+          throw error;
+        const content =
+          entry.status === "D" && entry.base
+            ? await entry.repository.content(entry.base, entry.originalPath)
+            : entry.mode === "staged"
+              ? await entry.repository.indexContent(entry.path)
+              : undefined;
+        if (content === undefined) throw error;
+        uri = this.snapshot(
+          entry.path,
+          content,
+          JSON.stringify([id, entry.mode, entry.base, "file"]),
+        );
+      }
+      await vscode.commands.executeCommand("vscode.open", uri, { preview: true });
     } catch (error) {
-      await vscode.window.showErrorMessage(`Could not open diff: ${errorMessage(error)}`);
+      await vscode.window.showErrorMessage(`Could not open file: ${errorMessage(error)}`);
     }
+  }
+
+  async openDiff(id: string): Promise<void> {
+    const key = `${this.mode}:${id}`;
+    const pending = this.openingDiffs.get(key);
+    if (pending) return pending;
+    const opening = this.showDiff(id)
+      .catch((error: unknown) => {
+        void vscode.window.showErrorMessage(`Could not open diff: ${errorMessage(error)}`);
+      })
+      .finally(() => this.openingDiffs.delete(key));
+    this.openingDiffs.set(key, opening);
+    return opening;
   }
 
   private async showDiff(id: string): Promise<void> {
     const entry = this.entries.get(id);
     if (!entry) return;
-    const { repository, base, path, originalPath, status } = entry;
+    const { repository, base, path, originalPath, status, mode } = entry;
     const content = base && status !== "A" ? await repository.content(base, originalPath) : "";
-    const left = this.snapshot(originalPath, content);
+    const identity = JSON.stringify([id, mode, base, originalPath]);
+    const left = this.snapshot(originalPath, content, `${identity}:left`);
     const workingUri = vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
     const deleted =
       status === "D" ||
@@ -245,10 +345,24 @@ export class ChangesView implements vscode.TreeDataProvider<Entry>, vscode.Dispo
             throw error;
           },
         )));
-    const right = deleted
-      ? this.snapshot(path, "")
-      : vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
-    const title = `${originalPath === path ? path : `${originalPath} → ${path}`} (${this.mode === "branch" ? "Branch" : "Uncommitted"})`;
+    const right =
+      mode === "staged"
+        ? this.snapshot(
+            path,
+            status === "D" ? "" : await repository.indexContent(path),
+            `${identity}:right`,
+          )
+        : deleted
+          ? this.snapshot(path, "", `${identity}:right`)
+          : workingUri;
+    const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    if (
+      active instanceof vscode.TabInputTextDiff &&
+      active.original.toString() === left.toString() &&
+      active.modified.toString() === right.toString()
+    )
+      return;
+    const title = `${originalPath === path ? path : `${originalPath} → ${path}`} (${scopeLabels[mode]})`;
     try {
       await vscode.commands.executeCommand("vscode.diff", left, right, title, { preview: true });
     } catch (error) {

@@ -1,15 +1,17 @@
 # vsvibe
 
-Browse changed files in the **Review** activity-bar sidebar. Select a file in the native TreeView to open its VS Code diff editor. Use **Review Scope** dropdown in the view toolbar to choose Branch or Uncommitted. A checkmark marks the active option; the current mode appears beside the view title.
+Browse changed files in the **Review** activity-bar sidebar. Select a file row to open its VS Code diff editor, or use the row’s **Open File** icon to open the file directly. Deleted files open their previous contents. Use **Review Scope** dropdown in the view toolbar to choose Uncommitted, Unstaged, Staged, or Branch. A checkmark marks the active option; the current mode appears beside the view title.
 
-- **Branch** (initial selection): net changes from the merge base with the default branch to the current working tree, including committed, staged, unstaged, and untracked files. On the default branch, switch to Uncommitted to see local changes.
+- **Branch** (initial selection): net changes from the merge base with the default branch to the current working tree, including committed, staged, unstaged, and untracked files. On the default branch, this shows uncommitted changes relative to HEAD; before the first commit, existing files appear as additions.
+- **Unstaged**: changes from the index to the working tree, including untracked files. The left side of the diff uses the staged content.
+- **Staged**: changes from HEAD to the index. The right side uses staged content, excluding any later working-tree edits.
 - **Uncommitted**: net changes from HEAD to the working tree, including staged, unstaged, and untracked files. Before the first commit, existing files appear as additions.
 
-The flat list shows native file icons, filenames, parent paths, and Git status letters. Renames compare the original path with the new path; added and deleted files use an empty side of the diff. Conflicts are marked U. Ignored files are excluded. Unsaved editor changes are not included in the Git file list until saved.
+The three-dot **More Actions** menu contains Refresh, View as Tree, and View as List. List is the default; the layout selection persists per workspace. Tree groups files by folder and separates repositories at the root. Both layouts show native file icons and right-aligned Git status badges. Renames compare the original path with the new path; added and deleted files use an empty side of the diff. Conflicts are marked U. Ignored files are excluded. Unsaved editor changes are not included in the Git file list until saved.
 
 The selected mode persists per workspace. Changes refresh on Git state and file events, when the panel becomes visible, or with its Refresh button. Multiple repositories appear in the same list with repository labels.
 
-Default-branch detection uses locally available remote HEAD refs (origin first), then local main or master. Set `vsvibe.defaultBranch` to a ref such as `upstream/trunk` if needed. Comparisons do not fetch from the network. Detached HEADs and repositories without a known default branch show an explanatory message in Branch mode.
+Default-branch detection uses locally available remote HEAD refs (origin first), then local main or master. Set `vsvibe.defaultBranch` to a ref such as `upstream/trunk` if needed. Comparisons do not fetch from the network. With a detached HEAD or no known default branch, Branch mode falls back to uncommitted changes relative to HEAD.
 
 ## Development
 

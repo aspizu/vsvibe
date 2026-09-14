@@ -3,20 +3,40 @@ import type { GitExtension } from "./git-api";
 import { ChangesView } from "./view";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const extension = vscode.extensions.getExtension<GitExtension>("vscode.git");
-  if (!extension) return;
-  const git = (await extension.activate()).getAPI(1);
-  const view = new ChangesView(context, git);
-  for (const mode of ["uncommitted", "branch"] as const) {
+  const view = new ChangesView(context);
+  context.subscriptions.push(view);
+  for (const mode of ["uncommitted", "unstaged", "staged", "branch"] as const) {
     for (const suffix of ["", ".selected"]) {
       context.subscriptions.push(
         vscode.commands.registerCommand(`vsvibe.scope.${mode}${suffix}`, () => view.setMode(mode)),
       );
     }
   }
+  for (const layout of ["tree", "list"] as const) {
+    for (const suffix of ["", ".selected"]) {
+      context.subscriptions.push(
+        vscode.commands.registerCommand(`vsvibe.layout.${layout}${suffix}`, () =>
+          view.setLayout(layout),
+        ),
+      );
+    }
+  }
   context.subscriptions.push(
-    view,
     vscode.commands.registerCommand("vsvibe.refresh", () => view.refresh()),
     vscode.commands.registerCommand("vsvibe.openDiff", (id: string) => view.openDiff(id)),
+    vscode.commands.registerCommand(
+      "vsvibe.openFile",
+      (entry: { path: string; repository: { root: string } }) =>
+        view.openFile(
+          vscode.Uri.joinPath(vscode.Uri.file(entry.repository.root), entry.path).toString(),
+        ),
+    ),
   );
+  try {
+    const extension = vscode.extensions.getExtension<GitExtension>("vscode.git");
+    if (!extension) throw new Error("Enable VS Code's built-in Git extension to use Review.");
+    view.initialize((await extension.activate()).getAPI(1));
+  } catch (error) {
+    await view.initializationFailed(error);
+  }
 }
