@@ -5,6 +5,10 @@
   "private": true,
   "description": "Browse branch and uncommitted changes in the sidebar and open file diffs.",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aspizu/vsvibe.git"
+  },
   "main": "./dist/extension.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
