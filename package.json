@@ -141,6 +141,22 @@
       {
         "command": "vsvibe.copyRelativePath",
         "title": "Copy Relative Path"
+      },
+      {
+        "command": "vsvibe.revealInFinder",
+        "title": "Reveal in Finder"
+      },
+      {
+        "command": "vsvibe.revealInFileExplorer",
+        "title": "Reveal in File Explorer"
+      },
+      {
+        "command": "vsvibe.revealInFileManager",
+        "title": "Reveal in File Manager"
+      },
+      {
+        "command": "vsvibe.revealInExplorer",
+        "title": "Reveal in Explorer View"
       }
     ],
     "menus": {
@@ -204,6 +220,22 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "vsvibe.revealInFinder",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.revealInFileExplorer",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.revealInFileManager",
+          "when": "false"
+        },
+        {
+          "command": "vsvibe.revealInExplorer",
+          "when": "false"
+        },
         {
           "command": "vsvibe.copyRelativePath",
           "when": "false"
@@ -334,6 +366,26 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "vsvibe.revealInFinder",
+          "when": "view == vsvibe.changes && viewItem == reviewFile && isMac",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.revealInFileExplorer",
+          "when": "view == vsvibe.changes && viewItem == reviewFile && isWindows",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.revealInFileManager",
+          "when": "view == vsvibe.changes && viewItem == reviewFile && isLinux",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vsvibe.revealInExplorer",
+          "when": "view == vsvibe.changes && viewItem == reviewFile",
+          "group": "navigation@2"
+        },
         {
           "command": "vsvibe.copyRelativePath",
           "when": "view == vsvibe.changes && viewItem == reviewFile",

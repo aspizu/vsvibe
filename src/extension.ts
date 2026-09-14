@@ -28,6 +28,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }
   }
+  for (const [command, target] of [
+    ["revealInFinder", "revealFileInOS"],
+    ["revealInFileExplorer", "revealFileInOS"],
+    ["revealInFileManager", "revealFileInOS"],
+    ["revealInExplorer", "revealInExplorer"],
+  ] as const) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        `vsvibe.${command}`,
+        (entry: { path: string; repository: { root: string } }) =>
+          vscode.commands.executeCommand(
+            target,
+            vscode.Uri.joinPath(vscode.Uri.file(entry.repository.root), entry.path),
+          ),
+      ),
+    );
+  }
   context.subscriptions.push(
     vscode.commands.registerCommand("vsvibe.refresh", () => view.refresh()),
     vscode.commands.registerCommand("vsvibe.openDiff", (id: string) => view.openDiff(id)),
