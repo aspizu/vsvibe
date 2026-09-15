@@ -23,7 +23,7 @@
     "hooks": "lefthook install",
     "prepare": "lefthook install",
     "vscode:prepublish": "pnpm build",
-    "package": "vsce package --no-dependencies --allow-missing-repository --skip-license",
+    "package": "vsce package --readme-path README.vscode.md --no-dependencies --allow-missing-repository --skip-license",
     "test": "pnpm build && node --test test/*.test.cjs"
   },
   "devDependencies": {
