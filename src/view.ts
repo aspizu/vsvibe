@@ -40,9 +40,15 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private readonly repositories = new Map<string, vscode.Disposable>();
   private entries = new Map<string, Entry>();
   private readonly snapshots = new Map<string, string>();
+  private readonly snapshotChanged = new vscode.EventEmitter<vscode.Uri>();
+  private readonly lastTurnEditors = new Map<
+    string,
+    { left: vscode.Uri; right: vscode.Uri; root: string; path: string; after: string }
+  >();
   private readonly lastTurn = new LastTurnReader();
   private readonly openingDiffs = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private expandTimer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
   private selectedId: string | undefined;
   private disposed = false;
@@ -64,6 +70,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.subscriptions.push(
       this.view,
       this.changed,
+      this.snapshotChanged,
       this.decorationsChanged,
       vscode.window.registerFileDecorationProvider({
         onDidChangeFileDecorations: this.decorationsChanged.event,
@@ -83,11 +90,29 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         if (visible) void this.refresh();
       }),
       vscode.workspace.registerTextDocumentContentProvider("vsvibe-diff", {
+        onDidChange: this.snapshotChanged.event,
         provideTextDocumentContent: (uri) => this.snapshots.get(uri.toString()) ?? "",
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
         this.snapshots.delete(document.uri.toString());
+        for (const [id, editor] of this.lastTurnEditors) {
+          if (
+            !this.snapshots.has(editor.left.toString()) &&
+            !this.snapshots.has(editor.right.toString())
+          )
+            this.lastTurnEditors.delete(id);
+        }
       }),
+      vscode.workspace.onDidChangeTextDocument(({ document }) => {
+        if (
+          document.uri.scheme === "vsvibe-diff" ||
+          [...this.lastTurnEditors.values()].some(
+            ({ right }) => right.toString() === document.uri.toString(),
+          )
+        )
+          this.scheduleExpand();
+      }),
+      vscode.window.onDidChangeActiveTextEditor(() => this.scheduleExpand()),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("vsvibe.defaultBranch")) this.schedule();
       }),
@@ -107,7 +132,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       new vscode.RelativePattern(vscode.Uri.file(sessionsDirectory), "**/*.jsonl"),
     );
     const sessionChanged = () => {
-      if (this.mode === "lastTurn") this.schedule();
+      if (this.mode === "lastTurn" || this.lastTurnEditors.size) this.schedule();
     };
     this.subscriptions.push(
       sessionsWatcher,
@@ -161,6 +186,21 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.timer = setTimeout(() => {
       void this.refresh();
     }, 250);
+  }
+
+  private scheduleExpand(): void {
+    if (this.expandTimer) clearTimeout(this.expandTimer);
+    this.expandTimer = setTimeout(() => {
+      if (this.disposed) return;
+      const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      if (
+        active instanceof vscode.TabInputTextDiff &&
+        [...this.lastTurnEditors.values()].some(
+          ({ right }) => right.toString() === active.modified.toString(),
+        )
+      )
+        void vscode.commands.executeCommand("diffEditor.showAllUnchangedRegions");
+    }, 100);
   }
 
   private get modeLabel(): string {
@@ -252,9 +292,13 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   }
 
   async refresh(): Promise<void> {
-    if (this.disposed || (!this.git && this.mode !== "lastTurn")) return;
+    if (this.disposed || (!this.git && this.mode !== "lastTurn" && !this.lastTurnEditors.size))
+      return;
     const generation = ++this.generation;
     const mode = this.mode;
+    if (mode !== "lastTurn" && this.lastTurnEditors.size)
+      await this.loadLastTurn(generation, false);
+    if (this.disposed || generation !== this.generation) return;
     const selected = this.view.selection[0];
     if (selected && !("children" in selected)) {
       this.selectedId = vscode.Uri.joinPath(
@@ -268,7 +312,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.view.message = "";
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
-    if (!this.view.visible) return;
+    if (!this.view.visible && !(mode === "lastTurn" && this.lastTurnEditors.size)) return;
     await Promise.all([
       vscode.commands.executeCommand("setContext", "vsvibe.empty", false),
       vscode.commands.executeCommand("setContext", "vsvibe.loading", true),
@@ -284,7 +328,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     }
   }
 
-  private async loadLastTurn(generation: number): Promise<void> {
+  private async loadLastTurn(generation: number, publish = true): Promise<void> {
     const folders =
       vscode.workspace.workspaceFolders?.filter(({ uri }) => uri.scheme === "file") ?? [];
     const entries = new Map<string, Entry>();
@@ -306,7 +350,32 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         // Unavailable sessions use the shared empty state.
       }
     }
-    await this.publishChanges(generation, entries, []);
+    if (this.disposed || generation !== this.generation) return;
+    this.refreshLastTurnEditors(entries);
+    if (publish) await this.publishChanges(generation, entries, []);
+  }
+
+  private refreshLastTurnEditors(entries: Map<string, Entry>): void {
+    for (const [id, editor] of this.lastTurnEditors) {
+      const entry =
+        entries.get(id) ??
+        [...entries.values()].find(
+          (entry) => entry.repository.root === editor.root && entry.originalPath === editor.path,
+        );
+      const previous = editor.after;
+      const before = entry?.recorded?.before ?? previous;
+      const after = entry?.recorded?.after ?? previous;
+      if (entry) editor.path = entry.path;
+      this.updateSnapshot(editor.left, before);
+      editor.after = after;
+      if (editor.right.scheme === "vsvibe-diff") this.updateSnapshot(editor.right, after);
+    }
+  }
+
+  private updateSnapshot(uri: vscode.Uri, content: string): void {
+    if (this.snapshots.get(uri.toString()) === content) return;
+    this.snapshots.set(uri.toString(), content);
+    this.snapshotChanged.fire(uri);
   }
 
   private async loadChanges(generation: number, mode: Mode): Promise<void> {
@@ -363,18 +432,20 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.changed.fire();
     const selected = this.selectedId ? entries.get(this.selectedId) : undefined;
     if (selected) {
-      await this.view.reveal(selected, { select: true, focus: false, expand: false });
+      if (this.view.visible)
+        await this.view.reveal(selected, { select: true, focus: false, expand: false });
     } else {
       this.selectedId = undefined;
     }
   }
 
-  private snapshot(path: string, content: string, identity: string): vscode.Uri {
+  private snapshot(path: string, content: string, identity: string, live = false): vscode.Uri {
     const query = createHash("sha256")
-      .update(JSON.stringify([identity, content]))
+      .update(JSON.stringify(live ? [identity] : [identity, content]))
       .digest("hex");
     const uri = vscode.Uri.from({ scheme: "vsvibe-diff", path: `/${path}`, query });
-    this.snapshots.set(uri.toString(), content);
+    if (live) this.updateSnapshot(uri, content);
+    else this.snapshots.set(uri.toString(), content);
     return uri;
   }
 
@@ -431,8 +502,10 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     const content =
       entry.recorded?.before ??
       (base && status !== "A" ? await repository.content(base, originalPath) : "");
-    const identity = JSON.stringify([id, mode, base, originalPath]);
-    const left = this.snapshot(originalPath, content, `${identity}:left`);
+    const identity = JSON.stringify(
+      mode === "lastTurn" ? [id, mode] : [id, mode, base, originalPath],
+    );
+    const left = this.snapshot(originalPath, content, `${identity}:left`, mode === "lastTurn");
     const workingUri = vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
     const deleted =
       status === "D" ||
@@ -444,17 +517,26 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
             throw error;
           },
         )));
-    const right = entry.recorded
-      ? this.snapshot(path, entry.recorded.after, `${identity}:right`)
-      : mode === "staged"
+    const right =
+      mode === "staged"
         ? this.snapshot(
             path,
             status === "D" ? "" : await repository.indexContent(path),
             `${identity}:right`,
           )
         : deleted
-          ? this.snapshot(path, "", `${identity}:right`)
+          ? this.snapshot(path, "", `${identity}:right`, mode === "lastTurn")
           : workingUri;
+    if (entry.recorded) {
+      this.lastTurnEditors.set(id, {
+        left,
+        right,
+        root: repository.root,
+        path,
+        after: entry.recorded.after,
+      });
+      this.scheduleExpand();
+    }
     const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
     if (
       active instanceof vscode.TabInputTextDiff &&
@@ -468,9 +550,11 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         preview: true,
         preserveFocus: true,
       });
+      if (entry.recorded) this.scheduleExpand();
     } catch (error) {
       this.snapshots.delete(left.toString());
       if (right.scheme === "vsvibe-diff") this.snapshots.delete(right.toString());
+      if (entry.recorded) this.lastTurnEditors.delete(id);
       throw error;
     }
   }
@@ -479,6 +563,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.disposed = true;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
+    if (this.expandTimer) clearTimeout(this.expandTimer);
     this.repositories.forEach((subscription) => subscription.dispose());
     this.subscriptions.forEach((subscription) => subscription.dispose());
     this.snapshots.clear();

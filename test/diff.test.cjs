@@ -13,6 +13,7 @@ function fixture(mode = "branch", status = "M") {
   });
   const calls = [];
   const titles = [];
+  const updates = [];
   const group = {};
   class TabInputTextDiff {
     constructor(original, modified) {
@@ -29,10 +30,12 @@ function fixture(mode = "branch", status = "M") {
     TabInputTextDiff,
     window: {
       tabGroups: { activeTabGroup: group },
+      withProgress: async (_options, task) => task(),
       showErrorMessage: (message) => assert.fail(message),
     },
     commands: {
       executeCommand: async (command, left, right, title, options) => {
+        if (command === "diffEditor.showAllUnchangedRegions" || command === "setContext") return;
         assert.equal(command, "vscode.diff");
         assert.equal(options.preserveFocus, true);
         calls.push([left.toString(), right.toString()]);
@@ -44,11 +47,10 @@ function fixture(mode = "branch", status = "M") {
   const path = resolve(__dirname, "../dist/view.js");
   const originalRequire = createRequire(path);
   const module = { exports: {} };
-  runInNewContext(`(function(require, module, exports) { ${readFileSync(path, "utf8")}\n})`)(
-    (name) => (name === "vscode" ? vscode : originalRequire(name)),
-    module,
-    module.exports,
-  );
+  runInNewContext(`(function(require, module, exports) { ${readFileSync(path, "utf8")}\n})`, {
+    setTimeout,
+    clearTimeout,
+  })((name) => (name === "vscode" ? vscode : originalRequire(name)), module, module.exports);
   const view = Object.create(module.exports.ChangesView.prototype);
   let index = "staged content";
   Object.assign(view, {
@@ -71,6 +73,8 @@ function fixture(mode = "branch", status = "M") {
       ],
     ]),
     snapshots: new Map(),
+    snapshotChanged: { fire: (uri) => updates.push(uri.toString()) },
+    lastTurnEditors: new Map(),
     openingDiffs: new Map(),
   });
   return {
@@ -78,6 +82,7 @@ function fixture(mode = "branch", status = "M") {
     calls,
     titles,
     group,
+    updates,
     setIndex: (value) => {
       index = value;
     },
@@ -129,14 +134,83 @@ test("nested and renamed files use only the destination filename in the tab titl
   assert.equal(titles[0], "new-name.ts (Branch)");
 });
 
-test("Last Turn uses recorded contents on both sides instead of Git or working files", async () => {
+test("Last Turn uses the real workspace file with a recorded baseline", async () => {
   const { view, calls, titles } = fixture("lastTurn", "M");
   const entry = view.entries.get("file");
   entry.recorded = { before: "before turn\n", after: "after turn\n" };
   entry.repository.content = async () => assert.fail("Last Turn must not read Git content");
   await view.openDiff("file");
   assert.equal(calls.length, 1);
-  assert.ok(calls[0].every((uri) => uri.startsWith("vsvibe-diff:")));
-  assert.deepEqual([...view.snapshots.values()], ["before turn\n", "after turn\n"]);
+  assert.ok(calls[0][0].startsWith("vsvibe-diff:"));
+  assert.equal(calls[0][1], "file:/repo/file.txt?");
+  assert.deepEqual([...view.snapshots.values()], ["before turn\n"]);
   assert.equal(titles[0], "file.txt (Last Turn)");
+});
+
+test("open Last Turn diffs refresh the baseline without replacing the working file", async () => {
+  const { view, calls, updates } = fixture("lastTurn");
+  const entry = view.entries.get("file");
+  entry.recorded = { before: "original\n", after: "first\n" };
+  await view.openDiff("file");
+  updates.length = 0;
+  entry.recorded = { before: "first\n", after: "second\n" };
+  view.refreshLastTurnEditors(view.entries);
+  assert.deepEqual(updates, [calls[0][0]]);
+  assert.deepEqual([...view.snapshots.values()], ["first\n"]);
+  assert.equal(calls[0][1], "file:/repo/file.txt?");
+  await view.openDiff("file");
+  assert.equal(calls.length, 1);
+});
+
+test("a file absent from the next turn uses its last recorded contents as the baseline", async () => {
+  const { view } = fixture("lastTurn");
+  view.entries.get("file").recorded = { before: "before\n", after: "full\nfile\n" };
+  await view.openDiff("file");
+  view.refreshLastTurnEditors(new Map());
+  assert.deepEqual([...view.snapshots.values()], ["full\nfile\n"]);
+});
+
+test("refresh scheduling debounces repeated events", async () => {
+  const { view } = fixture();
+  let refreshes = 0;
+  view.refresh = async () => {
+    refreshes++;
+  };
+  view.schedule();
+  view.schedule();
+  view.schedule();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(refreshes, 1);
+});
+
+test("open Last Turn editors refresh when the sidebar is hidden or on a different scope", async () => {
+  for (const mode of ["lastTurn", "branch"]) {
+    const { view, calls } = fixture("lastTurn");
+    const entry = view.entries.get("file");
+    entry.recorded = { before: "old\n", after: "first\n" };
+    await view.openDiff("file");
+    const next = new Map([
+      ["file", { ...entry, recorded: { before: "first\n", after: "second\n" } }],
+    ]);
+    Object.assign(view, {
+      mode,
+      generation: 0,
+      view: { selection: [], visible: false },
+      changed: { fire() {} },
+      decorationsChanged: { fire() {} },
+      loadLastTurn: async () => view.refreshLastTurnEditors(next),
+      loadChanges: async () => view.refreshLastTurnEditors(next),
+    });
+    await view.refresh();
+    assert.deepEqual([...view.snapshots.values()], ["first\n"], mode);
+    assert.equal(calls.length, 1);
+  }
+});
+
+test("deleted Last Turn files retain an empty virtual right side", async () => {
+  const { view, calls } = fixture("lastTurn", "D");
+  view.entries.get("file").recorded = { before: "deleted\n", after: "" };
+  await view.openDiff("file");
+  assert.ok(calls[0][1].startsWith("vsvibe-diff:"));
+  assert.deepEqual([...view.snapshots.values()], ["deleted\n", ""]);
 });

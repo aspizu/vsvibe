@@ -187,3 +187,68 @@ test("missing sessions and incomplete trailing JSON are handled", async (t) => {
   await appendFile(path, '{"type":');
   assert.deepEqual(await new LastTurnReader().read(f.workspace, f.sessions), { files: [] });
 });
+
+test("full snapshots include unchanged lines and remain stable until a turn completes", async (t) => {
+  const f = await fixture(t);
+  const reader = new LastTurnReader();
+  await writeFile(join(f.workspace, "file.txt"), "header\nfirst\nfooter\n");
+  const records = [
+    start("one"),
+    patch("one", { "file.txt": update("@@ -2 +2 @@\n-original\n+first\n") }),
+    complete("one"),
+  ];
+  await f.session("session", f.workspace, records);
+  const first = await reader.read(f.workspace, f.sessions);
+  assert.equal(first.files[0].before, "header\noriginal\nfooter\n");
+  assert.equal(first.files[0].after, "header\nfirst\nfooter\n");
+  await writeFile(join(f.workspace, "file.txt"), "header\nsecond\nfooter\n");
+  records.push(
+    start("two"),
+    patch("two", { "file.txt": update("@@ -2 +2 @@\n-first\n+second\n") }),
+  );
+  await f.session("session", f.workspace, records, 2000);
+  assert.deepEqual(await reader.read(f.workspace, f.sessions), first);
+  records.push(complete("two"));
+  await f.session("session", f.workspace, records, 3000);
+  const second = await reader.read(f.workspace, f.sessions);
+  assert.equal(second.files[0].before, "header\nfirst\nfooter\n");
+  assert.equal(second.files[0].after, "header\nsecond\nfooter\n");
+});
+
+test("full reconstruction handles repeated edits, renames and unchanged prefixes without a final newline", () => {
+  const groups = [
+    { old: update("@@ -2 +2,2 @@\n-before\n+middle\n+extra\n", "new") },
+    { new: update("@@ -2 +2 @@\n-middle\n+after\n") },
+  ];
+  const files = reconstructPatches(
+    groups,
+    "/repo",
+    new Map([["new", "header\nafter\nextra\nfooter\n"]]),
+  );
+  assert.equal(files[0].before, "header\nbefore\nfooter\n");
+  assert.equal(files[0].after, "header\nafter\nextra\nfooter\n");
+  const noNewline = reconstructPatches(
+    [
+      {
+        file: update(
+          "@@ -2 +2 @@\n-before\n\\ No newline at end of file\n+after\n\\ No newline at end of file\n",
+        ),
+      },
+    ],
+    "/repo",
+    new Map([["file", "header\nafter"]]),
+  );
+  assert.equal(noNewline[0].before, "header\nbefore");
+  assert.equal(noNewline[0].after, "header\nafter");
+});
+
+test("inconsistent full files are unavailable instead of showing partial content", async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.workspace, "file.txt"), "header\nunrelated edit\nfooter\n");
+  await f.session("session", f.workspace, [
+    start("one"),
+    patch("one", { "file.txt": update("@@ -2 +2 @@\n-before\n+after\n") }),
+    complete("one"),
+  ]);
+  assert.deepEqual(await new LastTurnReader().read(f.workspace, f.sessions), { files: [] });
+});

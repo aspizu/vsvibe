@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readdir, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
@@ -57,6 +57,7 @@ async function canonical(path: string): Promise<string> {
 
 export class LastTurnReader {
   private readonly metadata = new Map<string, { size: number; mtime: number; cwd: string }>();
+  private readonly completed = new Map<string, { id: string; files: RecordedChange[] }>();
 
   async read(
     workspace: string,
@@ -98,13 +99,44 @@ export class LastTurnReader {
         this.metadata.set(candidate.path, meta);
       }
       if (meta.cwd !== root) continue;
-      return readTurn(candidate.path, root);
+      const turn = await readTurn(candidate.path);
+      if (!turn) continue;
+      const cached = this.completed.get(candidate.path);
+      if (cached?.id === turn.id) return { files: cached.files };
+      if (!turn.patches.size) {
+        this.completed.set(candidate.path, { id: turn.id, files: [] });
+        return { files: [] };
+      }
+      try {
+        const contents = new Map<string, string>();
+        for (const group of turn.patches.values()) {
+          for (const [path, value] of Object.entries(
+            group as Record<string, Record<string, unknown>>,
+          )) {
+            const destination = safePath(
+              root,
+              typeof value.move_path === "string" ? value.move_path : path,
+            );
+            if (contents.has(destination)) continue;
+            try {
+              contents.set(destination, await readFile(join(root, destination), "utf8"));
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
+          }
+        }
+        const files = reconstructPatches([...turn.patches.values()], root, contents);
+        this.completed.set(candidate.path, { id: turn.id, files });
+        return { files };
+      } catch {
+        return { files: [] };
+      }
     }
     return { files: [] };
   }
 }
 
-async function readTurn(path: string, root: string): Promise<{ files: RecordedChange[] }> {
+async function readTurn(path: string): Promise<Turn | undefined> {
   let active: Turn | undefined;
   let completed: Turn | undefined;
   for await (const record of records(path)) {
@@ -146,12 +178,7 @@ async function readTurn(path: string, root: string): Promise<{ files: RecordedCh
     if (id) active.seen.add(id);
     active.patches.set(String(active.patches.size), changes);
   }
-  if (!completed?.patches.size) return { files: [] };
-  try {
-    return { files: reconstructPatches([...completed.patches.values()], root) };
-  } catch {
-    return { files: [] };
-  }
+  return completed;
 }
 
 function safePath(root: string, path: string): string {
@@ -179,7 +206,11 @@ function render(lines: Line[], partial: boolean): string {
   return result;
 }
 
-export function reconstructPatches(groups: unknown[], root: string): RecordedChange[] {
+export function reconstructPatches(
+  groups: unknown[],
+  root: string,
+  contents?: Map<string, string>,
+): RecordedChange[] {
   const documents = new Map<string, Document>();
   for (const group of groups) {
     for (const [rawPath, rawChange] of Object.entries(group as Record<string, unknown>)) {
@@ -230,6 +261,20 @@ export function reconstructPatches(groups: unknown[], root: string): RecordedCha
   }
   return [...documents]
     .flatMap(([path, doc]) => {
+      if (
+        contents &&
+        !doc.deleted &&
+        (doc.partial || doc.current.some((line) => line.text === undefined))
+      ) {
+        const content = contents.get(path);
+        if (content === undefined) throw new Error("Full file unavailable");
+        const lines = split(content);
+        if (lines.length < doc.current.length) throw new Error("File changed since turn");
+        fill(doc, 0, lines);
+        doc.partial = false;
+      }
+      if (contents && doc.original.some((line) => line.text === undefined))
+        throw new Error("Original file incomplete");
       const before = doc.added ? "" : render(doc.original, doc.partial);
       const after = doc.deleted ? "" : render(doc.current, doc.partial);
       if (before === after && path === doc.originalPath) return [];
