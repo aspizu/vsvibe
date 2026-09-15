@@ -42,7 +42,7 @@
         {
           "id": "vsvibe",
           "title": "Review",
-          "icon": "media/changes.svg"
+          "icon": "$(multi-diff-editor-label-icon)"
         }
       ]
     },
@@ -50,7 +50,8 @@
       "vsvibe": [
         {
           "id": "vsvibe.changes",
-          "name": "Review"
+          "name": "Review",
+          "icon": "$(multi-diff-editor-label-icon)"
         }
       ]
     },
