@@ -288,12 +288,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     const folders =
       vscode.workspace.workspaceFolders?.filter(({ uri }) => uri.scheme === "file") ?? [];
     const entries = new Map<string, Entry>();
-    const messages: string[] = [];
     for (const folder of folders) {
       try {
         const result = await this.lastTurn.read(folder.uri.fsPath);
-        if (result.message)
-          messages.push(folders.length > 1 ? `${folder.name}: ${result.message}` : result.message);
         const repository = new Repository(folder.uri.fsPath);
         for (const file of result.files) {
           const id = vscode.Uri.joinPath(folder.uri, file.path).toString();
@@ -305,12 +302,11 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
             recorded: file,
           });
         }
-      } catch (error) {
-        messages.push(`Last Turn unavailable: ${errorMessage(error)}`);
+      } catch {
+        // Unavailable sessions use the shared empty state.
       }
     }
-    if (!folders.length) messages.push("Open a workspace folder to see its last Codex turn.");
-    await this.publishChanges(generation, entries, messages);
+    await this.publishChanges(generation, entries, []);
   }
 
   private async loadChanges(generation: number, mode: Mode): Promise<void> {

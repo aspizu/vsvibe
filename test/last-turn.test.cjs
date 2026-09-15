@@ -82,7 +82,7 @@ test("does not fall back to an older turn when the latest has no patches", async
   ]);
   const result = await new LastTurnReader().read(f.workspace, f.sessions);
   assert.equal(result.files.length, 0);
-  assert.match(result.message, /no recorded patches/);
+  assert.deepEqual(result, { files: [] });
 });
 
 test("successful patch_apply_end is read and failed changes are excluded", async (t) => {
@@ -179,15 +179,11 @@ test("rejects incomplete patches, conflicting edits and paths outside the worksp
 
 test("missing sessions and incomplete trailing JSON are handled", async (t) => {
   const f = await fixture(t);
-  assert.match(
-    (await new LastTurnReader().read(f.workspace, join(f.sessions, "missing"))).message,
-    /No Codex session/,
-  );
+  assert.deepEqual(await new LastTurnReader().read(f.workspace, join(f.sessions, "missing")), {
+    files: [],
+  });
   const path = await f.session("session", f.workspace, [start("one"), complete("one")]);
   const { appendFile } = require("node:fs/promises");
   await appendFile(path, '{"type":');
-  assert.match(
-    (await new LastTurnReader().read(f.workspace, f.sessions)).message,
-    /no recorded patches/,
-  );
+  assert.deepEqual(await new LastTurnReader().read(f.workspace, f.sessions), { files: [] });
 });

@@ -61,7 +61,7 @@ export class LastTurnReader {
   async read(
     workspace: string,
     directory = sessionsDirectory,
-  ): Promise<{ files: RecordedChange[]; message: string }> {
+  ): Promise<{ files: RecordedChange[] }> {
     const root = await canonical(workspace);
     const candidates: Array<{ path: string; mtime: number }> = [];
     const walk = async (path: string): Promise<void> => {
@@ -100,14 +100,11 @@ export class LastTurnReader {
       if (meta.cwd !== root) continue;
       return readTurn(candidate.path, root);
     }
-    return { files: [], message: "No Codex session found for this workspace." };
+    return { files: [] };
   }
 }
 
-async function readTurn(
-  path: string,
-  root: string,
-): Promise<{ files: RecordedChange[]; message: string }> {
+async function readTurn(path: string, root: string): Promise<{ files: RecordedChange[] }> {
   let active: Turn | undefined;
   let completed: Turn | undefined;
   for await (const record of records(path)) {
@@ -149,28 +146,11 @@ async function readTurn(
     if (id) active.seen.add(id);
     active.patches.set(String(active.patches.size), changes);
   }
-  if (!completed)
-    return { files: [], message: "Last Turn unavailable: no completed turn recorded." };
-  if (!completed.patches.size)
-    return {
-      files: [],
-      message:
-        "Last Turn unavailable: this turn has no recorded patches. Shell edits cannot be reconstructed.",
-    };
+  if (!completed?.patches.size) return { files: [] };
   try {
-    const files = reconstructPatches([...completed.patches.values()], root);
-    return {
-      files,
-      message: files.length
-        ? "Recorded patches only. Diffs show recorded lines; shell edits are not included."
-        : "",
-    };
+    return { files: reconstructPatches([...completed.patches.values()], root) };
   } catch {
-    return {
-      files: [],
-      message:
-        "Last Turn unavailable: the recorded patches do not contain enough consistent data to reconstruct the changes.",
-    };
+    return { files: [] };
   }
 }
 
