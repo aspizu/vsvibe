@@ -36,6 +36,48 @@ test("tree separates matching paths across repositories", () => {
 
 test("empty input stays empty", () => assert.deepEqual(buildTree([]), []));
 
+test("single-child folder chains become one folder with the deepest path", () => {
+  const file = entry("src/components/buttons/button.ts");
+  const tree = buildTree([file]);
+  assert.equal(tree.length, 1);
+  assert.equal(tree[0].name, "src/components/buttons");
+  assert.equal(tree[0].path, "src/components/buttons");
+  assert.equal(tree[0].root, "/repo");
+  assert.deepEqual(tree[0].children, [file]);
+});
+
+test("compaction stops at branches and folders containing files", () => {
+  const files = [
+    entry("src/components/buttons/a.ts"),
+    entry("src/components/inputs/b.ts"),
+    entry("src/components/inputs/nested/c.ts"),
+  ];
+  const tree = buildTree(files);
+  assert.equal(tree[0].name, "src/components");
+  assert.deepEqual(
+    tree[0].children.map((node) => node.name),
+    ["buttons", "inputs"],
+  );
+  assert.deepEqual(
+    tree[0].children[1].children.map((node) => node.name ?? node.path),
+    ["nested", "src/components/inputs/b.ts"],
+  );
+});
+
+test("repository roots remain separate above compact folders", () => {
+  const files = [entry("src/lib/a.ts", "/one"), entry("src/lib/b.ts", "/two")];
+  const tree = buildTree(files);
+  assert.deepEqual(
+    tree.map((node) => node.name),
+    ["one", "two"],
+  );
+  for (const [index, root] of tree.entries()) {
+    assert.equal(root.path, "");
+    assert.equal(root.children[0].name, "src/lib");
+    assert.equal(root.children[0].children[0], files[index]);
+  }
+});
+
 test("status sorting groups badges and uses paths to break ties", () => {
   const { compareStatus } = require("../dist/tree.js");
   const files = [

@@ -61,8 +61,22 @@ export function buildTree<T extends FileEntry>(
         ),
     );
   };
-  for (const folder of [...roots.values(), ...folders.values()]) sort(folder.children);
+  const compact = (nodes: Array<T | Folder<T>>) => {
+    for (const node of nodes) {
+      if (!isFolder(node)) continue;
+      // Keep repository roots separate when displaying multiple repositories.
+      while (node.path && node.children.length === 1) {
+        const child = node.children[0]!;
+        if (!isFolder(child)) break;
+        node.name = `${node.name}/${child.name}`;
+        node.path = child.path;
+        node.children = child.children;
+      }
+      compact(node.children);
+    }
+    sort(nodes);
+  };
   const result = roots.size === 1 ? [...roots.values()][0]!.children : [...roots.values()];
-  sort(result);
+  compact(result);
   return result;
 }
