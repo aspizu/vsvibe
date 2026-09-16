@@ -361,7 +361,6 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       ).toString();
     }
     this.view.title = this.modeLabel;
-    if (!this.view.visible && !(mode === "lastTurn" && this.lastTurnEditors.size)) return;
     await vscode.commands.executeCommand("setContext", "vsvibe.loading", true);
     try {
       await vscode.window.withProgress({ location: { viewId: "vsvibe.changes" } }, () =>
@@ -468,6 +467,12 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.entries = entries;
     this.tree = buildTree([...entries.values()], this.sortOrder);
     this.view.message = messages.join("\n");
+    this.view.badge = entries.size
+      ? {
+          value: entries.size,
+          tooltip: `${entries.size} ${entries.size === 1 ? "file" : "files"} (${this.modeLabel})`,
+        }
+      : undefined;
     await vscode.commands.executeCommand(
       "setContext",
       "vsvibe.empty",
