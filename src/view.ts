@@ -321,8 +321,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         ? [repository, directory === "." ? "" : directory].filter(Boolean).join(" · ")
         : "";
     const status = statusDetails[entry.status]?.label ?? entry.status;
-    item.tooltip = `${entry.originalPath === entry.path ? entry.path : `${entry.originalPath} → ${entry.path}`} (${status})`;
-    item.accessibilityInformation = { label: item.tooltip };
+    item.tooltip =
+      entry.originalPath === entry.path ? entry.path : `${entry.originalPath} → ${entry.path}`;
+    item.accessibilityInformation = { label: `${item.tooltip} (${status})` };
     item.command = { command: "vsvibe.openDiff", title: "Open Diff", arguments: [item.id] };
     return item;
   }
