@@ -16,14 +16,12 @@ Bring a Codex-style review workflow into your editor. See what changed in your b
 
 ## Install
 
-Requires VS Code 1.110 or later, Git, Node.js 24 or later, and pnpm. Make sure the `code` command is available in your terminal.
+Requires VS Code 1.110 or later and Git.
 
-```sh
-git clone https://github.com/aspizu/vsvibe.git
-cd vsvibe
-pnpm install --frozen-lockfile
-pnpm package --out dist/vsvibe.vsix
-code --install-extension dist/vsvibe.vsix --force
-```
+1. [Download VSVibe](https://github.com/aspizu/vsvibe/releases/download/latest/vsvibe.vsix).
+2. Open the Command Palette in VS Code and run **Extensions: Install from VSIX...**.
+3. Select the downloaded `vsvibe.vsix` file.
+
+The download always contains the latest successful build. To update, download it again and repeat the installation steps.
 
 Open a Git project in VS Code, select **Review** in the activity bar, and choose a scope. **Last Turn** uses local Codex session history.
