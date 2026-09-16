@@ -87,7 +87,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         },
       }),
       this.view.onDidChangeVisibility(({ visible }) => {
-        if (visible) void this.refresh();
+        if (visible) this.schedule();
       }),
       vscode.workspace.registerTextDocumentContentProvider("vsvibe-diff", {
         onDidChange: this.snapshotChanged.event,
@@ -182,8 +182,10 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   }
 
   private schedule(): void {
+    if (this.disposed) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
+      this.timer = undefined;
       void this.refresh();
     }, 250);
   }
@@ -292,6 +294,8 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   }
 
   async refresh(): Promise<void> {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
     if (this.disposed || (!this.git && this.mode !== "lastTurn" && !this.lastTurnEditors.size))
       return;
     const generation = ++this.generation;
@@ -306,17 +310,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         selected.path,
       ).toString();
     }
-    this.entries.clear();
-    this.tree = [];
     this.view.title = this.modeLabel;
-    this.view.message = "";
-    this.decorationsChanged.fire(undefined);
-    this.changed.fire();
     if (!this.view.visible && !(mode === "lastTurn" && this.lastTurnEditors.size)) return;
-    await Promise.all([
-      vscode.commands.executeCommand("setContext", "vsvibe.empty", false),
-      vscode.commands.executeCommand("setContext", "vsvibe.loading", true),
-    ]);
+    await vscode.commands.executeCommand("setContext", "vsvibe.loading", true);
     try {
       await vscode.window.withProgress({ location: { viewId: "vsvibe.changes" } }, () =>
         this.loadChanges(generation, mode),

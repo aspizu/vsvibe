@@ -183,6 +183,71 @@ test("refresh scheduling debounces repeated events", async () => {
   assert.equal(refreshes, 1);
 });
 
+test("an immediate refresh cancels the queued automatic refresh", async () => {
+  const { view } = fixture();
+  let refreshes = 0;
+  Object.assign(view, {
+    git: {},
+    generation: 0,
+    view: { selection: [], visible: true },
+    loadChanges: async () => refreshes++,
+  });
+  view.schedule();
+  await view.refresh();
+  assert.equal(refreshes, 1);
+  assert.equal(view.timer, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(refreshes, 1);
+});
+
+test("refresh retains rows and decorations until replacement data is published", async () => {
+  const { view } = fixture();
+  const entries = view.entries;
+  const tree = [...entries.values()];
+  let changes = 0;
+  let decorations = 0;
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const next = new Map();
+  Object.assign(view, {
+    git: {},
+    generation: 0,
+    layout: "tree",
+    tree,
+    view: { selection: [], visible: true, message: "Previous message" },
+    changed: { fire: () => changes++ },
+    decorationsChanged: { fire: () => decorations++ },
+    loadChanges: async (generation) => {
+      await pending;
+      await view.publishChanges(generation, next, []);
+    },
+  });
+  const refresh = view.refresh();
+  await Promise.resolve();
+  assert.equal(view.entries, entries);
+  assert.equal(view.entries.size, 1);
+  assert.equal(view.getChildren(), tree);
+  assert.equal(view.view.message, "Previous message");
+  assert.equal(changes, 0);
+  assert.equal(decorations, 0);
+  finish();
+  await refresh;
+  assert.equal(view.entries, next);
+  assert.equal(view.getChildren().length, 0);
+  assert.equal(view.view.message, "");
+  assert.equal(changes, 1);
+  assert.equal(decorations, 1);
+});
+
+test("disposed views do not queue automatic refreshes", () => {
+  const { view } = fixture();
+  view.disposed = true;
+  view.schedule();
+  assert.equal(view.timer, undefined);
+});
+
 test("open Last Turn editors refresh when the sidebar is hidden or on a different scope", async () => {
   for (const mode of ["lastTurn", "branch"]) {
     const { view, calls } = fixture("lastTurn");
