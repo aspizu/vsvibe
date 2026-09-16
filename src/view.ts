@@ -533,11 +533,25 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     }
   }
 
-  async openDiff(id: string): Promise<void> {
-    const key = `${this.mode}:${id}`;
+  async openAllDiffs(): Promise<void> {
+    const entries = [...this.entries];
+    if (!entries.length || this.disposed) return;
+    const tabs = vscode.window.tabGroups.all.flatMap((group) =>
+      group.tabs.filter((tab) => !tab.isDirty),
+    );
+    if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true))) return;
+    for (const [id, entry] of entries) {
+      if (this.disposed) return;
+      await this.openDiff(id, false, entry);
+    }
+  }
+
+  async openDiff(id: string, preview = true, entry = this.entries.get(id)): Promise<void> {
+    if (!entry) return;
+    const key = `${entry.mode}:${id}:${preview}`;
     const pending = this.openingDiffs.get(key);
     if (pending) return pending;
-    const opening = this.showDiff(id)
+    const opening = this.showDiff(id, entry, preview)
       .catch((error: unknown) => {
         void vscode.window.showErrorMessage(`Could not open diff: ${errorMessage(error)}`);
       })
@@ -546,9 +560,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     return opening;
   }
 
-  private async showDiff(id: string): Promise<void> {
-    const entry = this.entries.get(id);
-    if (!entry) return;
+  private async showDiff(id: string, entry: Entry, preview: boolean): Promise<void> {
     const { repository, base, path, originalPath, status, mode } = entry;
     const content =
       entry.recorded?.before ??
@@ -590,6 +602,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     }
     const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
     if (
+      preview &&
       active instanceof vscode.TabInputTextDiff &&
       active.original.toString() === left.toString() &&
       active.modified.toString() === right.toString()
@@ -598,7 +611,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     const title = `${basename(path)} (${scopeLabels[mode]})`;
     try {
       await vscode.commands.executeCommand("vscode.diff", left, right, title, {
-        preview: true,
+        preview,
         preserveFocus: true,
       });
       if (entry.recorded) this.scheduleExpand();

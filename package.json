@@ -57,6 +57,12 @@
     },
     "commands": [
       {
+        "command": "vsvibe.openAllDiffs",
+        "title": "Open All Diffs",
+        "icon": "$(eye)",
+        "enablement": "vsvibe.ready && !vsvibe.empty && !vsvibe.loading"
+      },
+      {
         "command": "vsvibe.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
@@ -180,14 +186,19 @@
           "group": "navigation@1"
         },
         {
+          "command": "vsvibe.openAllDiffs",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@2"
+        },
+        {
           "command": "vsvibe.loading",
           "when": "view == vsvibe.changes && vsvibe.loading",
-          "group": "navigation@2"
+          "group": "navigation@3"
         },
         {
           "submenu": "vsvibe.options",
           "when": "view == vsvibe.changes",
-          "group": "navigation@3"
+          "group": "navigation@4"
         }
       ],
       "vsvibe.scope": [

@@ -14,7 +14,21 @@ function fixture(mode = "branch", status = "M") {
   const calls = [];
   const titles = [];
   const updates = [];
-  const group = {};
+  const previews = [];
+  const group = { tabs: [] };
+  const closed = [];
+  const tabGroups = {
+    activeTabGroup: group,
+    all: [group],
+    close: async (tabs) => {
+      closed.push(...tabs);
+      for (const group of tabGroups.all) {
+        if (tabs.includes(group.activeTab)) group.activeTab = undefined;
+        group.tabs = group.tabs.filter((tab) => !tabs.includes(tab));
+      }
+      return true;
+    },
+  };
   class TabInputTextDiff {
     constructor(original, modified) {
       this.original = original;
@@ -29,7 +43,7 @@ function fixture(mode = "branch", status = "M") {
     },
     TabInputTextDiff,
     window: {
-      tabGroups: { activeTabGroup: group },
+      tabGroups,
       withProgress: async (_options, task) => task(),
       showErrorMessage: (message) => assert.fail(message),
     },
@@ -39,8 +53,10 @@ function fixture(mode = "branch", status = "M") {
         assert.equal(command, "vscode.diff");
         assert.equal(options.preserveFocus, true);
         calls.push([left.toString(), right.toString()]);
+        previews.push(options.preview);
         titles.push(title);
         group.activeTab = { input: new TabInputTextDiff(left, right) };
+        group.tabs.push(group.activeTab);
       },
     },
   };
@@ -86,6 +102,9 @@ function fixture(mode = "branch", status = "M") {
     titles,
     group,
     updates,
+    previews,
+    closed,
+    tabGroups,
     setIndex: (value) => {
       index = value;
     },
@@ -105,6 +124,46 @@ test("concurrent clicks share one pending diff open", async () => {
   const { view, calls } = fixture();
   await Promise.all([view.openDiff("file"), view.openDiff("file")]);
   assert.equal(calls.length, 1);
+});
+
+test("open all closes existing tabs and opens every diff kept-open", async () => {
+  const { view, calls, previews, titles, closed, tabGroups } = fixture();
+  const entry = view.entries.get("file");
+  view.entries.set("second", { ...entry, path: "second.txt", originalPath: "second.txt" });
+  view.entries.set("third", { ...entry, path: "third.txt", originalPath: "third.txt" });
+  await view.openDiff("file");
+  const previous = tabGroups.activeTabGroup.activeTab;
+  const other = { input: {} };
+  tabGroups.all.push({ tabs: [other] });
+  await view.openAllDiffs();
+  assert.deepEqual(closed, [previous, other]);
+  assert.deepEqual(previews, [true, false, false, false]);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[0], calls[1]);
+  assert.deepEqual(titles.slice(1), [
+    "file.txt (Branch)",
+    "second.txt (Branch)",
+    "third.txt (Branch)",
+  ]);
+});
+
+test("canceling tab closure stops open all", async () => {
+  const { view, calls, tabGroups } = fixture();
+  tabGroups.activeTabGroup.tabs.push({ input: {}, isDirty: false });
+  tabGroups.close = async () => false;
+  await view.openAllDiffs();
+  assert.equal(calls.length, 0);
+});
+
+test("open all leaves unsaved editors open", async () => {
+  const { view, closed, tabGroups, previews } = fixture();
+  const dirty = { input: {}, isDirty: true };
+  const clean = { input: {}, isDirty: false };
+  tabGroups.activeTabGroup.tabs.push(dirty, clean);
+  await view.openAllDiffs();
+  assert.deepEqual(closed, [clean]);
+  assert.ok(tabGroups.activeTabGroup.tabs.includes(dirty));
+  assert.deepEqual(previews, [false]);
 });
 
 test("returning from another tab reuses the same diff URIs", async () => {
