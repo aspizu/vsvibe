@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname } from "node:path";
+import { basename, dirname, isAbsolute, relative, sep } from "node:path";
 import { stat } from "node:fs/promises";
 import * as vscode from "vscode";
 import { LastTurnReader, sessionsDirectory, type RecordedChange } from "./last-turn";
@@ -48,6 +48,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private readonly lastTurn = new LastTurnReader();
   private readonly openingDiffs = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly pendingPaths = new Set<string>();
+  private refreshRequested = false;
+  private scheduleGeneration = 0;
   private expandTimer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
   private selectedId: string | undefined;
@@ -120,7 +123,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     const watcher = vscode.workspace.createFileSystemWatcher("**/*");
     const changed = (uri: vscode.Uri) => {
       if (!uri.path.split("/").some((part) => part === "node_modules" || part === ".git"))
-        this.schedule();
+        this.schedule(uri.fsPath);
     };
     this.subscriptions.push(
       watcher,
@@ -181,13 +184,57 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.schedule();
   }
 
-  private schedule(): void {
+  private schedule(path?: string): void {
     if (this.disposed) return;
+    if (path) this.pendingPaths.add(path);
+    else this.refreshRequested = true;
+    const generation = ++this.scheduleGeneration;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.refresh();
+      void this.refreshScheduled(generation);
     }, 250);
+  }
+
+  private async refreshScheduled(generation: number): Promise<void> {
+    let needed = this.refreshRequested;
+    if (!needed) {
+      try {
+        needed = await this.hasRelevantChanges([...this.pendingPaths]);
+      } catch {
+        // Refresh if Git cannot classify the paths rather than miss a change.
+        needed = true;
+      }
+    }
+    if (this.disposed || generation !== this.scheduleGeneration) return;
+    this.pendingPaths.clear();
+    this.refreshRequested = false;
+    if (needed) await this.refresh();
+  }
+
+  private async hasRelevantChanges(paths: string[]): Promise<boolean> {
+    const git = this.git;
+    if (!git) return true;
+    const roots = git.repositories
+      .filter(({ rootUri }) => rootUri.scheme === "file")
+      .map(({ rootUri }) => rootUri.fsPath)
+      .sort((a, b) => b.length - a.length);
+    const batches = new Map<string, string[]>();
+    for (const path of paths) {
+      const root = roots.find((root) => {
+        const local = relative(root, path);
+        return local !== ".." && !local.startsWith(`..${sep}`) && !isAbsolute(local);
+      });
+      if (!root) return true;
+      const batch = batches.get(root) ?? [];
+      batch.push(relative(root, path) || ".");
+      batches.set(root, batch);
+    }
+    for (const [root, batch] of batches) {
+      const ignored = await new Repository(root, git.git.path).ignoredPaths(batch);
+      if (batch.some((path) => !ignored.has(path))) return true;
+    }
+    return false;
   }
 
   private scheduleExpand(): void {
@@ -294,6 +341,9 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   }
 
   async refresh(): Promise<void> {
+    this.scheduleGeneration++;
+    this.pendingPaths.clear();
+    this.refreshRequested = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     if (this.disposed || (!this.git && this.mode !== "lastTurn" && !this.lastTurnEditors.size))

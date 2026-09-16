@@ -31,14 +31,34 @@ export class Repository {
   ) {}
 
   async git(...args: string[]): Promise<string> {
-    const { stdout } = await exec(this.executable, ["--no-optional-locks", ...args], {
+    return this.runGit(args);
+  }
+
+  private async runGit(args: string[], input?: string): Promise<string> {
+    const pending = exec(this.executable, ["--no-optional-locks", ...args], {
       cwd: this.root,
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024,
       timeout: 15_000,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LITERAL_PATHSPECS: "1" },
     });
+    pending.child.stdin?.end(input);
+    const { stdout } = await pending;
     return stdout;
+  }
+
+  async ignoredPaths(paths: string[]): Promise<Set<string>> {
+    if (!paths.length) return new Set();
+    try {
+      const output = await this.runGit(
+        ["--no-literal-pathspecs", "check-ignore", "-z", "--stdin"],
+        `${paths.join("\0")}\0`,
+      );
+      return new Set(output.split("\0").filter(Boolean));
+    } catch (error) {
+      if (isGitExit(error, 1)) return new Set();
+      throw error;
+    }
   }
 
   private async ref(name: string): Promise<string | undefined> {

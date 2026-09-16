@@ -40,6 +40,18 @@ function fixture(t, initial = true) {
 const statuses = (result) =>
   Object.fromEntries(result.files.map((file) => [file.path, file.status]));
 
+test("ignore filtering preserves tracked and new source files and handles unusual paths", async (t) => {
+  const f = fixture(t);
+  f.write(".gitignore", "ignored/\nmodified.txt\n*.log\n!keep.log\n");
+  const paths = ["modified.txt", "new.ts", "ignored/deleted.txt", "odd\t\nname.log", "keep.log"];
+  assert.deepEqual(
+    await f.repo.ignoredPaths(paths),
+    new Set(["ignored/deleted.txt", "odd\t\nname.log"]),
+  );
+  assert.deepEqual(await f.repo.ignoredPaths(["new.ts"]), new Set());
+  assert.deepEqual(await f.repo.ignoredPaths([]), new Set());
+});
+
 test("uncommitted combines staged, unstaged, untracked, renamed and deleted files", async (t) => {
   const f = fixture(t);
   f.write("modified.txt", "staged\n");

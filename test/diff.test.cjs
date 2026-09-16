@@ -55,6 +55,9 @@ function fixture(mode = "branch", status = "M") {
   let index = "staged content";
   Object.assign(view, {
     mode,
+    pendingPaths: new Set(),
+    scheduleGeneration: 0,
+    refreshRequested: false,
     entries: new Map([
       [
         "file",
@@ -197,6 +200,43 @@ test("an immediate refresh cancels the queued automatic refresh", async () => {
   assert.equal(refreshes, 1);
   assert.equal(view.timer, undefined);
   await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(refreshes, 1);
+});
+
+test("watcher batches skip ignored paths and Git events bypass ignore filtering", async () => {
+  const { view } = fixture();
+  let refreshes = 0;
+  const batches = [];
+  view.refresh = async () => refreshes++;
+  view.hasRelevantChanges = async (paths) => {
+    batches.push(Array.from(paths));
+    return paths.includes("/repo/new.ts");
+  };
+  view.schedule("/repo/output.log");
+  view.schedule("/repo/output.log");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(refreshes, 0);
+  assert.deepEqual(batches, [["/repo/output.log"]]);
+  view.schedule("/repo/output.log");
+  view.schedule("/repo/new.ts");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(refreshes, 1);
+  view.schedule("/repo/output.log");
+  view.schedule();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(refreshes, 2);
+  assert.equal(batches.length, 2);
+});
+
+test("ignore check failures still refresh", async () => {
+  const { view } = fixture();
+  let refreshes = 0;
+  view.refresh = async () => refreshes++;
+  view.hasRelevantChanges = async () => {
+    throw new Error("Git unavailable");
+  };
+  view.pendingPaths.add("/repo/file.txt");
+  await view.refreshScheduled(view.scheduleGeneration);
   assert.equal(refreshes, 1);
 });
 
