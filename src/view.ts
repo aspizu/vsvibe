@@ -89,9 +89,6 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
           );
         },
       }),
-      this.view.onDidChangeVisibility(({ visible }) => {
-        if (visible) this.schedule();
-      }),
       vscode.workspace.registerTextDocumentContentProvider("vsvibe-diff", {
         onDidChange: this.snapshotChanged.event,
         provideTextDocumentContent: (uri) => this.snapshots.get(uri.toString()) ?? "",
