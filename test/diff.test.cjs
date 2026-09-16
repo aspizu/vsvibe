@@ -155,6 +155,28 @@ test("canceling tab closure stops open all", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("a slow diff does not delay opening the other diffs", async () => {
+  const { view, titles } = fixture();
+  const entry = view.entries.get("file");
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  view.entries.set("second", {
+    ...entry,
+    path: "second.txt",
+    originalPath: "second.txt",
+    repository: { ...entry.repository, content: async () => "original" },
+  });
+  entry.repository.content = () => pending;
+  const opening = view.openAllDiffs();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(titles, ["second.txt (Branch)"]);
+  finish("original");
+  await opening;
+  assert.deepEqual(titles, ["second.txt (Branch)", "file.txt (Branch)"]);
+});
+
 test("open all leaves unsaved editors open", async () => {
   const { view, closed, tabGroups, previews } = fixture();
   const dirty = { input: {}, isDirty: true };

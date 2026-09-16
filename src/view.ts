@@ -537,10 +537,8 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       group.tabs.filter((tab) => !tab.isDirty),
     );
     if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true))) return;
-    for (const [id, entry] of entries) {
-      if (this.disposed) return;
-      await this.openDiff(id, false, entry);
-    }
+    if (this.disposed) return;
+    await Promise.all(entries.map(([id, entry]) => this.openDiff(id, false, entry)));
   }
 
   async openDiff(id: string, preview = true, entry = this.entries.get(id)): Promise<void> {
