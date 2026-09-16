@@ -12,6 +12,7 @@ function fixture(mode = "branch", status = "M") {
     path,
   });
   const calls = [];
+  const files = [];
   const titles = [];
   const updates = [];
   const previews = [];
@@ -35,6 +36,11 @@ function fixture(mode = "branch", status = "M") {
       this.modified = modified;
     }
   }
+  class TabInputText {
+    constructor(uri) {
+      this.uri = uri;
+    }
+  }
   const vscode = {
     Uri: {
       from: ({ scheme, path, query }) => uri(scheme, path, query),
@@ -42,6 +48,7 @@ function fixture(mode = "branch", status = "M") {
       joinPath: (root, path) => uri(root.scheme, `${root.path}/${path}`),
     },
     TabInputTextDiff,
+    TabInputText,
     window: {
       tabGroups,
       withProgress: async (_options, task) => task(),
@@ -50,6 +57,14 @@ function fixture(mode = "branch", status = "M") {
     commands: {
       executeCommand: async (command, left, right, title, options) => {
         if (command === "diffEditor.showAllUnchangedRegions" || command === "setContext") return;
+        if (command === "vscode.open") {
+          assert.equal(right.preserveFocus, true);
+          files.push(left.toString());
+          previews.push(right.preview);
+          group.activeTab = { input: new TabInputText(left) };
+          group.tabs.push(group.activeTab);
+          return;
+        }
         assert.equal(command, "vscode.diff");
         assert.equal(options.preserveFocus, true);
         calls.push([left.toString(), right.toString()]);
@@ -99,6 +114,7 @@ function fixture(mode = "branch", status = "M") {
   return {
     view,
     calls,
+    files,
     titles,
     group,
     updates,
@@ -111,7 +127,7 @@ function fixture(mode = "branch", status = "M") {
   };
 }
 
-for (const status of ["A", "M", "D", "R"]) {
+for (const status of ["M", "D", "R"]) {
   test(`clicking the active ${status} diff again does not reopen it`, async () => {
     const { view, calls } = fixture("branch", status);
     await view.openDiff("file");
@@ -119,6 +135,40 @@ for (const status of ["A", "M", "D", "R"]) {
     assert.equal(calls.length, 1);
   });
 }
+
+for (const mode of ["branch", "uncommitted", "unstaged", "lastTurn"]) {
+  test(`added files in ${mode} open directly and reuse the active editor`, async () => {
+    const { view, calls, files, previews } = fixture(mode, "A");
+    await view.openDiff("file");
+    await view.openDiff("file");
+    assert.equal(calls.length, 0);
+    assert.deepEqual(files, ["file:/repo/file.txt?"]);
+    assert.deepEqual(previews, [true]);
+    assert.equal(view.snapshots.size, 0);
+  });
+}
+
+test("added staged files open index contents and update when the index changes", async () => {
+  const { view, calls, files, setIndex } = fixture("staged", "A");
+  await view.openDiff("file");
+  await view.openDiff("file");
+  assert.equal(files.length, 1);
+  assert.ok(files[0].startsWith("vsvibe-diff:"));
+  assert.deepEqual([...view.snapshots.values()], ["staged content"]);
+  setIndex("updated staged content");
+  await view.openDiff("file");
+  assert.equal(calls.length, 0);
+  assert.equal(files.length, 2);
+  assert.notEqual(files[0], files[1]);
+});
+
+test("open all opens added files directly as kept-open editors", async () => {
+  const { view, files, calls, previews } = fixture("branch", "A");
+  await view.openAllDiffs();
+  assert.deepEqual(files, ["file:/repo/file.txt?"]);
+  assert.deepEqual(previews, [false]);
+  assert.equal(calls.length, 0);
+});
 
 test("concurrent clicks share one pending diff open", async () => {
   const { view, calls } = fixture();

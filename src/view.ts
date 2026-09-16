@@ -557,9 +557,27 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
 
   private async showDiff(id: string, entry: Entry, preview: boolean): Promise<void> {
     const { repository, base, path, originalPath, status, mode } = entry;
+    if (status === "A") {
+      const uri =
+        mode === "staged"
+          ? this.snapshot(
+              path,
+              await repository.indexContent(path),
+              JSON.stringify([id, mode, base, "added"]),
+            )
+          : vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
+      const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      if (
+        preview &&
+        active instanceof vscode.TabInputText &&
+        active.uri.toString() === uri.toString()
+      )
+        return;
+      await vscode.commands.executeCommand("vscode.open", uri, { preview, preserveFocus: true });
+      return;
+    }
     const content =
-      entry.recorded?.before ??
-      (base && status !== "A" ? await repository.content(base, originalPath) : "");
+      entry.recorded?.before ?? (base ? await repository.content(base, originalPath) : "");
     const identity = JSON.stringify(
       mode === "lastTurn" ? [id, mode] : [id, mode, base, originalPath],
     );
