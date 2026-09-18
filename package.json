@@ -184,6 +184,13 @@
         "title": "✓ Last Turn"
       }
     ],
+    "keybindings": [
+      {
+        "command": "vsvibe.findFile",
+        "key": "cmd+r",
+        "when": "isMac && vsvibe.ready && !vsvibe.empty && !vsvibe.loading"
+      }
+    ],
     "menus": {
       "view/title": [
         {
