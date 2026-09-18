@@ -531,6 +531,24 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     }
   }
 
+  async findFile(): Promise<void> {
+    if (this.disposed || !this.entries.size) return;
+    const mode = this.mode;
+    const multipleRoots =
+      new Set([...this.entries.values()].map((entry) => entry.repository.root)).size > 1;
+    const items = [...this.entries].map(([id, entry]) => ({
+      id,
+      label: basename(entry.path),
+      description: multipleRoots ? `${entry.repository.root} · ${entry.path}` : entry.path,
+    }));
+    const selected = await vscode.window.showQuickPick(items, {
+      title: `Find Review File (${this.modeLabel})`,
+      placeHolder: "Search files in this review scope",
+      matchOnDescription: true,
+    });
+    if (selected && !this.disposed && this.mode === mode) await this.openDiff(selected.id);
+  }
+
   async openAllDiffs(): Promise<void> {
     const entries = [...this.entries];
     if (!entries.length || this.disposed) return;

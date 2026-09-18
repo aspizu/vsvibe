@@ -121,11 +121,57 @@ function fixture(mode = "branch", status = "M") {
     previews,
     closed,
     tabGroups,
+    window: vscode.window,
     setIndex: (value) => {
       index = value;
     },
   };
 }
+
+test("review finder searches scope paths and opens only the accepted item", async () => {
+  const { view, window, calls } = fixture();
+  const entry = view.entries.get("file");
+  view.entries.set("second", {
+    ...entry,
+    path: "src/file.txt",
+    originalPath: "src/file.txt",
+    repository: { ...entry.repository, root: "/other" },
+  });
+  let accept;
+  window.showQuickPick = (items, options) => {
+    assert.equal(items.length, 2);
+    assert.equal(items[0].label, "file.txt");
+    assert.equal(items[1].label, "file.txt");
+    assert.equal(items[0].description, "/repo · file.txt");
+    assert.equal(items[1].description, "/other · src/file.txt");
+    assert.equal(options.matchOnDescription, true);
+    assert.equal(options.title, "Find Review File (Branch)");
+    return new Promise((resolve) => {
+      accept = () => resolve(items[1]);
+    });
+  };
+  const finding = view.findFile();
+  assert.equal(calls.length, 0);
+  accept();
+  await finding;
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1], "file:/other/src/file.txt?");
+});
+
+test("canceling the finder opens nothing", async () => {
+  const { view, window, calls, files } = fixture();
+  window.showQuickPick = async () => undefined;
+  await view.findFile();
+  assert.equal(calls.length, 0);
+  assert.equal(files.length, 0);
+});
+
+test("accepting an added file in the finder opens it directly", async () => {
+  const { view, window, files } = fixture("branch", "A");
+  window.showQuickPick = async (items) => items[0];
+  await view.findFile();
+  assert.deepEqual(files, ["file:/repo/file.txt?"]);
+});
 
 for (const status of ["M", "D", "R"]) {
   test(`clicking the active ${status} diff again does not reopen it`, async () => {

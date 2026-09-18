@@ -57,6 +57,12 @@
     },
     "commands": [
       {
+        "command": "vsvibe.findFile",
+        "title": "Find Review File",
+        "icon": "$(search)",
+        "enablement": "vsvibe.ready && !vsvibe.empty && !vsvibe.loading"
+      },
+      {
         "command": "vsvibe.openAllDiffs",
         "title": "Open All Diffs",
         "icon": "$(eye)",
@@ -191,14 +197,19 @@
           "group": "navigation@2"
         },
         {
+          "command": "vsvibe.findFile",
+          "when": "view == vsvibe.changes",
+          "group": "navigation@3"
+        },
+        {
           "command": "vsvibe.loading",
           "when": "view == vsvibe.changes && vsvibe.loading",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "submenu": "vsvibe.options",
           "when": "view == vsvibe.changes",
-          "group": "navigation@4"
+          "group": "navigation@5"
         }
       ],
       "vsvibe.scope": [
