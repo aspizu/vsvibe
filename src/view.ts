@@ -30,6 +30,7 @@ interface TrackedDiff {
   mode: Mode;
   root: string;
   path: string;
+  originalPath: string;
   left: vscode.Uri;
   right: vscode.Uri;
   struck: boolean;
@@ -45,7 +46,10 @@ function findEntry(
   if (direct) return { id: record.id, entry: direct };
   // A renamed file keeps its review diff alive under the new path.
   for (const [id, candidate] of entries) {
-    if (candidate.repository.root === record.root && candidate.originalPath === record.path)
+    if (
+      candidate.repository.root === record.root &&
+      (candidate.originalPath === record.originalPath || candidate.originalPath === record.path)
+    )
       return { id, entry: candidate };
   }
   return undefined;
@@ -729,31 +733,38 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       });
       this.scheduleExpand();
     }
-    const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const active = activeTab?.input;
+    const alreadyOpen =
       preview &&
       active instanceof vscode.TabInputTextDiff &&
       active.original.toString() === left.toString() &&
-      active.modified.toString() === right.toString()
-    )
-      return;
+      active.modified.toString() === right.toString();
     try {
-      await vscode.commands.executeCommand(
-        "vscode.diff",
-        left,
-        right,
-        diffTitle(basename(path), mode, false),
-        { preview, preserveFocus: true },
+      if (!alreadyOpen)
+        await vscode.commands.executeCommand(
+          "vscode.diff",
+          left,
+          right,
+          diffTitle(basename(path), mode, false),
+          { preview, preserveFocus: true },
+        );
+      const key = `${mode}:${id}`;
+      const struck = Boolean(
+        this.reviewDiffs.get(key)?.struck ||
+        (alreadyOpen && activeTab?.label === diffTitle(basename(path), mode, true)),
       );
-      this.reviewDiffs.set(`${mode}:${id}`, {
+      this.reviewDiffs.set(key, {
         id,
         mode,
         root: repository.root,
         path,
+        originalPath: entry.originalPath,
         left,
         right,
-        struck: false,
+        struck,
       });
+      if (alreadyOpen && struck) await this.reconcileDiffs(mode, new Map([[id, entry]]), true);
       if (entry.recorded) this.scheduleExpand();
     } catch (error) {
       this.snapshots.delete(left.toString());
@@ -813,7 +824,12 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       // Added files open as plain editors, so their old diffs count as resolved.
       const active = found && found.entry.status !== "A" ? found : undefined;
       const struck = !active;
-      if (struck === record.struck || (struck && !reliable)) continue;
+      if (
+        (struck === record.struck &&
+          (!active || (active.id === record.id && active.entry.path === record.path))) ||
+        (struck && !reliable)
+      )
+        continue;
       try {
         const pair = active ? await this.diffPair(active.id, active.entry) : record;
         const title = diffTitle(
@@ -821,21 +837,28 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
           record.mode,
           struck,
         );
-        await vscode.window.tabGroups.close(
+        const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const lastTurnEditor = this.lastTurnEditors.get(record.id);
+        const closed = await vscode.window.tabGroups.close(
           open.map(({ tab }) => tab),
           true,
         );
-        for (const { tab, group } of open) {
+        if (!closed) continue;
+        for (const { tab, group } of open.sort(
+          (a, b) => Number(a.tab === activeTab) - Number(b.tab === activeTab),
+        )) {
           await vscode.commands.executeCommand("vscode.diff", pair.left, pair.right, title, {
             preview: tab.isPreview,
             viewColumn: group.viewColumn,
-            preserveFocus: true,
+            preserveFocus: tab !== activeTab,
           });
         }
         if (active) {
+          if (active.id !== record.id) this.lastTurnEditors.delete(record.id);
           record.id = active.id;
           record.root = active.entry.repository.root;
           record.path = active.entry.path;
+          record.originalPath = active.entry.originalPath;
           const renamedKey = `${record.mode}:${record.id}`;
           if (key !== renamedKey) {
             this.reviewDiffs.delete(key);
@@ -850,7 +873,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
               after: active.entry.recorded.after,
             });
           }
-        }
+        } else if (lastTurnEditor) this.lastTurnEditors.set(record.id, lastTurnEditor);
         record.left = pair.left;
         record.right = pair.right;
         record.struck = struck;

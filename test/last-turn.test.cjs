@@ -250,5 +250,8 @@ test("inconsistent full files are unavailable instead of showing partial content
     patch("one", { "file.txt": update("@@ -2 +2 @@\n-before\n+after\n") }),
     complete("one"),
   ]);
-  assert.deepEqual(await new LastTurnReader().read(f.workspace, f.sessions), { files: [] });
+  await assert.rejects(
+    new LastTurnReader().read(f.workspace, f.sessions),
+    /Could not reconstruct Last Turn/,
+  );
 });
