@@ -651,6 +651,16 @@ test("an already active diff is registered after extension reload", async () => 
   assert.equal(titles.at(-1), `${strike("file.txt")} (Branch)`);
 });
 
+test("reopening a struck diff clears its old title", async () => {
+  const { view, group, titles } = fixture();
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), true);
+  group.activeTab = undefined;
+  await view.openDiff("file");
+  assert.equal(titles.at(-1), "file.txt (Branch)");
+  assert.equal(view.reviewDiffs.get("branch:file").struck, false);
+});
+
 test("struck diffs keep their pinned state and group", async () => {
   const { view, previews, columns } = fixture();
   await view.openAllDiffs();

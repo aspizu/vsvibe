@@ -750,9 +750,13 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
           { preview, preserveFocus: true },
         );
       const key = `${mode}:${id}`;
+      const tracked = this.reviewDiffs.get(key);
+      const matchingTabs = this.openTabsForPair(left, right);
       const struck = Boolean(
-        this.reviewDiffs.get(key)?.struck ||
-        (alreadyOpen && activeTab?.label === diffTitle(basename(path), mode, true)),
+        matchingTabs.some(({ tab }) => tab.label === diffTitle(basename(path), mode, true)) ||
+        (tracked?.struck &&
+          tracked.left.toString() === left.toString() &&
+          tracked.right.toString() === right.toString()),
       );
       this.reviewDiffs.set(key, {
         id,
@@ -764,7 +768,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         right,
         struck,
       });
-      if (alreadyOpen && struck) await this.reconcileDiffs(mode, new Map([[id, entry]]), true);
+      if (struck) await this.reconcileDiffs(mode, new Map([[id, entry]]), true);
       if (entry.recorded) this.scheduleExpand();
     } catch (error) {
       this.snapshots.delete(left.toString());
