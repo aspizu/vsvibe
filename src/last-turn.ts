@@ -128,8 +128,10 @@ export class LastTurnReader {
         const files = reconstructPatches([...turn.patches.values()], root, contents);
         this.completed.set(candidate.path, { id: turn.id, files });
         return { files };
-      } catch {
-        return { files: [] };
+      } catch (error) {
+        throw new Error(`Could not reconstruct Last Turn from ${candidate.path}`, {
+          cause: error,
+        });
       }
     }
     return { files: [] };

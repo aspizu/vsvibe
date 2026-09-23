@@ -18,17 +18,23 @@ function fixture(mode = "branch", status = "M") {
   const titles = [];
   const updates = [];
   const previews = [];
-  const group = { tabs: [] };
+  const columns = [];
+  const focus = [];
+  const group = { tabs: [], viewColumn: 1 };
   const closed = [];
+  let closeResult = true;
+  let onClose = () => {};
   const tabGroups = {
     activeTabGroup: group,
     all: [group],
     close: async (tabs) => {
+      if (!closeResult) return false;
       closed.push(...tabs);
       for (const group of tabGroups.all) {
         if (tabs.includes(group.activeTab)) group.activeTab = undefined;
         group.tabs = group.tabs.filter((tab) => !tabs.includes(tab));
       }
+      onClose();
       return true;
     },
   };
@@ -73,11 +79,12 @@ function fixture(mode = "branch", status = "M") {
           return;
         }
         assert.equal(command, "vscode.diff");
-        assert.equal(options.preserveFocus, true);
+        focus.push(options.preserveFocus);
         calls.push([left.toString(), right.toString()]);
+        if (options.viewColumn !== undefined) columns.push(options.viewColumn);
         previews.push(options.preview);
         titles.push(title);
-        group.activeTab = { input: new TabInputTextDiff(left, right) };
+        group.activeTab = { input: new TabInputTextDiff(left, right), isPreview: options.preview };
         group.tabs.push(group.activeTab);
       },
     },
@@ -118,6 +125,7 @@ function fixture(mode = "branch", status = "M") {
     persistSnapshot() {},
     lastTurnEditors: new Map(),
     openingDiffs: new Map(),
+    reviewDiffs: new Map(),
   });
   return {
     view,
@@ -127,11 +135,19 @@ function fixture(mode = "branch", status = "M") {
     group,
     updates,
     previews,
+    columns,
+    focus,
     closed,
     tabGroups,
     window: vscode.window,
     setIndex: (value) => {
       index = value;
+    },
+    setCloseResult: (value) => {
+      closeResult = value;
+    },
+    setOnClose: (callback) => {
+      onClose = callback;
     },
   };
 }
@@ -524,4 +540,158 @@ test("deleted Last Turn files retain an empty virtual right side", async () => {
   await view.openDiff("file");
   assert.ok(calls[0][1].startsWith("vsvibe-diff:"));
   assert.deepEqual([...view.snapshots.values()], ["deleted\n", ""]);
+});
+
+function strike(name) {
+  return [...name].map((character) => `${character}\u0336`).join("");
+}
+
+test("committed files strike the open diff title", async () => {
+  const { view, titles, group } = fixture();
+  await view.openDiff("file");
+  assert.equal(titles[0], "file.txt (Branch)");
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.equal(titles[1], `${strike("file.txt")} (Branch)`);
+  assert.equal(group.tabs.length, 1);
+});
+
+test("restored changes clear the strike and refresh the diff", async () => {
+  const { view, titles, calls } = fixture();
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), true);
+  await view.reconcileDiffs("branch", view.entries, true);
+  assert.equal(titles[2], "file.txt (Branch)");
+  assert.deepEqual(calls[1], calls[0]);
+});
+
+test("diffs from another scope keep their title", async () => {
+  const { view, titles } = fixture();
+  await view.openDiff("file");
+  await view.reconcileDiffs("staged", new Map(), true);
+  assert.equal(titles.length, 1);
+});
+
+test("unreliable refreshes do not strike titles", async () => {
+  const { view, titles } = fixture();
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), false);
+  assert.equal(titles.length, 1);
+});
+
+test("renames revive a struck diff under the new path", async () => {
+  const { view, titles } = fixture("branch", "R");
+  const entry = view.entries.get("file");
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), true);
+  const renamed = { ...entry, path: "src/moved.txt", originalPath: "file.txt" };
+  await view.reconcileDiffs("branch", new Map([["file:/repo/src/moved.txt?", renamed]]), true);
+  assert.equal(titles[2], "moved.txt (Branch)");
+  assert.deepEqual([...view.reviewDiffs.keys()], ["branch:file:/repo/src/moved.txt?"]);
+});
+
+test("successive renames keep the base path for matching", async () => {
+  const { view, titles } = fixture("branch", "R");
+  const entry = view.entries.get("file");
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), true);
+  const first = { ...entry, path: "src/first.txt", originalPath: "file.txt" };
+  await view.reconcileDiffs("branch", new Map([["first", first]]), true);
+  await view.reconcileDiffs("branch", new Map(), true);
+  const second = { ...entry, path: "src/second.txt", originalPath: "file.txt" };
+  await view.reconcileDiffs("branch", new Map([["second", second]]), true);
+  assert.equal(titles.at(-1), "second.txt (Branch)");
+  assert.deepEqual([...view.reviewDiffs.keys()], ["branch:second"]);
+});
+
+test("open diffs follow successive renames without leaving the scope", async () => {
+  const { view, titles } = fixture("branch", "R");
+  const entry = view.entries.get("file");
+  await view.openDiff("file");
+  await view.reconcileDiffs(
+    "branch",
+    new Map([["first", { ...entry, path: "src/first.txt", originalPath: "file.txt" }]]),
+    true,
+  );
+  await view.reconcileDiffs(
+    "branch",
+    new Map([["second", { ...entry, path: "src/second.txt", originalPath: "file.txt" }]]),
+    true,
+  );
+  assert.deepEqual(titles, ["file.txt (Branch)", "first.txt (Branch)", "second.txt (Branch)"]);
+  assert.deepEqual([...view.reviewDiffs.keys()], ["branch:second"]);
+});
+
+test("active diffs regain focus after retitling", async () => {
+  const { view, focus } = fixture();
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.deepEqual(focus, [true, false]);
+});
+
+test("canceled closes leave the tracked title unchanged", async () => {
+  const { view, titles, group, setCloseResult } = fixture();
+  await view.openDiff("file");
+  setCloseResult(false);
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.equal(view.reviewDiffs.get("branch:file").struck, false);
+  assert.equal(group.tabs.length, 1);
+  setCloseResult(true);
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.equal(titles.at(-1), `${strike("file.txt")} (Branch)`);
+});
+
+test("an already active diff is registered after extension reload", async () => {
+  const { view, titles } = fixture();
+  await view.openDiff("file");
+  view.reviewDiffs.clear();
+  await view.openDiff("file");
+  assert.equal(titles.length, 1);
+  assert.equal(view.reviewDiffs.size, 1);
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.equal(titles.at(-1), `${strike("file.txt")} (Branch)`);
+});
+
+test("reopening a struck diff clears its old title", async () => {
+  const { view, group, titles } = fixture();
+  await view.openDiff("file");
+  await view.reconcileDiffs("branch", new Map(), true);
+  group.activeTab = undefined;
+  await view.openDiff("file");
+  assert.equal(titles.at(-1), "file.txt (Branch)");
+  assert.equal(view.reviewDiffs.get("branch:file").struck, false);
+});
+
+test("struck diffs keep their pinned state and group", async () => {
+  const { view, previews, columns } = fixture();
+  await view.openAllDiffs();
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.deepEqual(previews, [false, false]);
+  assert.deepEqual(columns, [1]);
+});
+
+test("closed diffs stop being tracked", async () => {
+  const { view, group } = fixture();
+  await view.openDiff("file");
+  group.tabs.length = 0;
+  await view.reconcileDiffs("branch", new Map(), true);
+  assert.equal(view.reviewDiffs.size, 0);
+});
+
+test("Last Turn diffs strike when the file leaves the turn", async () => {
+  const { view, titles } = fixture("lastTurn");
+  view.entries.get("file").recorded = { before: "before\n", after: "after\n" };
+  await view.openDiff("file");
+  await view.reconcileDiffs("lastTurn", new Map(), true);
+  assert.equal(titles[1], `${strike("file.txt")} (Last Turn)`);
+});
+
+test("struck Last Turn diffs keep their session subscription", async () => {
+  const { view, setOnClose } = fixture("lastTurn");
+  view.entries.get("file").recorded = { before: "before\n", after: "after\n" };
+  await view.openDiff("file");
+  setOnClose(() => view.lastTurnEditors.clear());
+  await view.reconcileDiffs("lastTurn", new Map(), true);
+  assert.equal(view.lastTurnEditors.size, 1);
+  await view.reconcileDiffs("lastTurn", view.entries, true);
+  assert.equal(view.reviewDiffs.get("lastTurn:file").struck, false);
 });

@@ -25,7 +25,35 @@ interface Entry extends Change {
   base: string | undefined;
 }
 
+interface TrackedDiff {
+  id: string;
+  mode: Mode;
+  root: string;
+  path: string;
+  originalPath: string;
+  left: vscode.Uri;
+  right: vscode.Uri;
+  struck: boolean;
+}
+
 type ReviewNode = Entry | Folder<Entry>;
+
+function findEntry(
+  entries: Map<string, Entry>,
+  record: TrackedDiff,
+): { id: string; entry: Entry } | undefined {
+  const direct = entries.get(record.id);
+  if (direct) return { id: record.id, entry: direct };
+  // A renamed file keeps its review diff alive under the new path.
+  for (const [id, candidate] of entries) {
+    if (
+      candidate.repository.root === record.root &&
+      (candidate.originalPath === record.originalPath || candidate.originalPath === record.path)
+    )
+      return { id, entry: candidate };
+  }
+  return undefined;
+}
 
 export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.Disposable {
   private readonly view: vscode.TreeView<ReviewNode>;
@@ -48,6 +76,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   >();
   private readonly lastTurn = new LastTurnReader();
   private readonly openingDiffs = new Map<string, Promise<void>>();
+  private readonly reviewDiffs = new Map<string, TrackedDiff>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly pendingPaths = new Set<string>();
   private refreshRequested = false;
@@ -395,6 +424,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     const folders =
       vscode.workspace.workspaceFolders?.filter(({ uri }) => uri.scheme === "file") ?? [];
     const entries = new Map<string, Entry>();
+    let reliable = true;
     for (const folder of folders) {
       try {
         const result = await this.lastTurn.read(folder.uri.fsPath);
@@ -410,12 +440,14 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
           });
         }
       } catch {
+        reliable = false;
         // Unavailable sessions use the shared empty state.
       }
     }
     if (this.disposed || generation !== this.generation) return;
     this.refreshLastTurnEditors(entries);
-    if (publish) await this.publishChanges(generation, entries, []);
+    if (publish) await this.publishChanges(generation, entries, [], reliable);
+    else void this.reconcileDiffs("lastTurn", entries, reliable);
   }
 
   private refreshLastTurnEditors(entries: Map<string, Entry>): void {
@@ -515,6 +547,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     generation: number,
     entries: Map<string, Entry>,
     messages: string[],
+    reliable = messages.length === 0,
   ): Promise<void> {
     if (this.disposed || generation !== this.generation) return;
     this.entries = entries;
@@ -534,6 +567,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     if (this.disposed || generation !== this.generation) return;
     this.decorationsChanged.fire(undefined);
     this.changed.fire();
+    void this.reconcileDiffs(this.mode, entries, reliable);
     const selected = this.selectedId ? entries.get(this.selectedId) : undefined;
     if (selected) {
       if (this.view.visible)
@@ -632,27 +666,11 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     return opening;
   }
 
-  private async showDiff(id: string, entry: Entry, preview: boolean): Promise<void> {
+  private async diffPair(
+    id: string,
+    entry: Entry,
+  ): Promise<{ left: vscode.Uri; right: vscode.Uri }> {
     const { repository, base, path, originalPath, status, mode } = entry;
-    if (status === "A") {
-      const uri =
-        mode === "staged"
-          ? this.snapshot(
-              path,
-              await repository.indexContent(path),
-              JSON.stringify([id, mode, base, "added"]),
-            )
-          : vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
-      const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-      if (
-        preview &&
-        active instanceof vscode.TabInputText &&
-        active.uri.toString() === uri.toString()
-      )
-        return;
-      await vscode.commands.executeCommand("vscode.open", uri, { preview, preserveFocus: true });
-      return;
-    }
     const content =
       entry.recorded?.before ?? (base ? await repository.content(base, originalPath) : "");
     const identity = JSON.stringify(
@@ -680,6 +698,31 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
         : deleted
           ? this.snapshot(path, "", `${identity}:right`, mode === "lastTurn")
           : workingUri;
+    return { left, right };
+  }
+
+  private async showDiff(id: string, entry: Entry, preview: boolean): Promise<void> {
+    const { repository, path, status, mode } = entry;
+    if (status === "A") {
+      const uri =
+        mode === "staged"
+          ? this.snapshot(
+              path,
+              await repository.indexContent(path),
+              JSON.stringify([id, mode, entry.base, "added"]),
+            )
+          : vscode.Uri.joinPath(vscode.Uri.file(repository.root), path);
+      const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      if (
+        preview &&
+        active instanceof vscode.TabInputText &&
+        active.uri.toString() === uri.toString()
+      )
+        return;
+      await vscode.commands.executeCommand("vscode.open", uri, { preview, preserveFocus: true });
+      return;
+    }
+    const { left, right } = await this.diffPair(id, entry);
     if (entry.recorded) {
       this.lastTurnEditors.set(id, {
         left,
@@ -690,26 +733,157 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       });
       this.scheduleExpand();
     }
-    const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const active = activeTab?.input;
+    const alreadyOpen =
       preview &&
       active instanceof vscode.TabInputTextDiff &&
       active.original.toString() === left.toString() &&
-      active.modified.toString() === right.toString()
-    )
-      return;
-    const title = `${basename(path)} (${scopeLabels[mode]})`;
+      active.modified.toString() === right.toString();
     try {
-      await vscode.commands.executeCommand("vscode.diff", left, right, title, {
-        preview,
-        preserveFocus: true,
+      if (!alreadyOpen)
+        await vscode.commands.executeCommand(
+          "vscode.diff",
+          left,
+          right,
+          diffTitle(basename(path), mode, false),
+          { preview, preserveFocus: true },
+        );
+      const key = `${mode}:${id}`;
+      const tracked = this.reviewDiffs.get(key);
+      const matchingTabs = this.openTabsForPair(left, right);
+      const struck = Boolean(
+        matchingTabs.some(({ tab }) => tab.label === diffTitle(basename(path), mode, true)) ||
+        (tracked?.struck &&
+          tracked.left.toString() === left.toString() &&
+          tracked.right.toString() === right.toString()),
+      );
+      this.reviewDiffs.set(key, {
+        id,
+        mode,
+        root: repository.root,
+        path,
+        originalPath: entry.originalPath,
+        left,
+        right,
+        struck,
       });
+      if (struck) await this.reconcileDiffs(mode, new Map([[id, entry]]), true);
       if (entry.recorded) this.scheduleExpand();
     } catch (error) {
       this.snapshots.delete(left.toString());
       if (right.scheme === "vsvibe-diff") this.snapshots.delete(right.toString());
       if (entry.recorded) this.lastTurnEditors.delete(id);
       throw error;
+    }
+  }
+
+  private openTabsForPair(
+    left: vscode.Uri,
+    right: vscode.Uri,
+  ): { tab: vscode.Tab; group: vscode.TabGroup }[] {
+    const matches: { tab: vscode.Tab; group: vscode.TabGroup }[] = [];
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input;
+        if (
+          input instanceof vscode.TabInputTextDiff &&
+          input.original.toString() === left.toString() &&
+          input.modified.toString() === right.toString()
+        )
+          matches.push({ tab, group });
+      }
+    }
+    return matches;
+  }
+
+  private reconcileQueue: Promise<void> | undefined;
+
+  private reconcileDiffs(
+    mode: Mode,
+    entries: Map<string, Entry>,
+    reliable: boolean,
+  ): Promise<void> {
+    // Serial runs keep one reconcile from pruning tabs another is retitling.
+    this.reconcileQueue ??= Promise.resolve();
+    const run = this.reconcileQueue.then(() => this.runReconcileDiffs(mode, entries, reliable));
+    this.reconcileQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runReconcileDiffs(
+    mode: Mode,
+    entries: Map<string, Entry>,
+    reliable: boolean,
+  ): Promise<void> {
+    if (this.disposed) return;
+    for (const [key, record] of this.reviewDiffs) {
+      const open = this.openTabsForPair(record.left, record.right);
+      if (!open.length) {
+        this.reviewDiffs.delete(key);
+        continue;
+      }
+      if (record.mode !== mode) continue;
+      const found = findEntry(entries, record);
+      // Added files open as plain editors, so their old diffs count as resolved.
+      const active = found && found.entry.status !== "A" ? found : undefined;
+      const struck = !active;
+      if (
+        (struck === record.struck &&
+          (!active || (active.id === record.id && active.entry.path === record.path))) ||
+        (struck && !reliable)
+      )
+        continue;
+      try {
+        const pair = active ? await this.diffPair(active.id, active.entry) : record;
+        const title = diffTitle(
+          basename(active ? active.entry.path : record.path),
+          record.mode,
+          struck,
+        );
+        const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const lastTurnEditor = this.lastTurnEditors.get(record.id);
+        const closed = await vscode.window.tabGroups.close(
+          open.map(({ tab }) => tab),
+          true,
+        );
+        if (!closed) continue;
+        for (const { tab, group } of open.sort(
+          (a, b) => Number(a.tab === activeTab) - Number(b.tab === activeTab),
+        )) {
+          await vscode.commands.executeCommand("vscode.diff", pair.left, pair.right, title, {
+            preview: tab.isPreview,
+            viewColumn: group.viewColumn,
+            preserveFocus: tab !== activeTab,
+          });
+        }
+        if (active) {
+          if (active.id !== record.id) this.lastTurnEditors.delete(record.id);
+          record.id = active.id;
+          record.root = active.entry.repository.root;
+          record.path = active.entry.path;
+          record.originalPath = active.entry.originalPath;
+          const renamedKey = `${record.mode}:${record.id}`;
+          if (key !== renamedKey) {
+            this.reviewDiffs.delete(key);
+            this.reviewDiffs.set(renamedKey, record);
+          }
+          if (active.entry.recorded) {
+            this.lastTurnEditors.set(active.id, {
+              left: pair.left,
+              right: pair.right,
+              root: active.entry.repository.root,
+              path: active.entry.path,
+              after: active.entry.recorded.after,
+            });
+          }
+        } else if (lastTurnEditor) this.lastTurnEditors.set(record.id, lastTurnEditor);
+        record.left = pair.left;
+        record.right = pair.right;
+        record.struck = struck;
+      } catch {
+        // Keep the current tab and retry on the next state change.
+      }
     }
   }
 
@@ -721,9 +895,18 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
     this.repositories.forEach((subscription) => subscription.dispose());
     this.subscriptions.forEach((subscription) => subscription.dispose());
     this.snapshots.clear();
+    this.reviewDiffs.clear();
   }
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function strikeout(text: string): string {
+  return [...text].map((character) => `${character}\u0336`).join("");
+}
+
+function diffTitle(name: string, mode: Mode, struck: boolean): string {
+  return `${struck ? strikeout(name) : name} (${scopeLabels[mode]})`;
 }
