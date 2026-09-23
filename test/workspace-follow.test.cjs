@@ -32,8 +32,15 @@ test("T3 chat state chooses the worktree, then the project root", async (t) => {
 function followerFixture(root, state = new Map(), storageUri) {
   const opened = [];
   const views = [];
+  let workspaceListener;
   const vscode = {
-    workspace: { workspaceFolders: [{ uri: { scheme: "file", fsPath: root } }] },
+    workspace: {
+      workspaceFolders: [{ uri: { scheme: "file", fsPath: root } }],
+      onDidChangeWorkspaceFolders(callback) {
+        workspaceListener = callback;
+        return { dispose() {} };
+      },
+    },
     Uri: { file: (fsPath) => ({ fsPath }) },
     commands: {
       executeCommand: async (name, uri, options) => {
@@ -77,8 +84,74 @@ function followerFixture(root, state = new Map(), storageUri) {
       },
     },
   };
-  return { WorkspaceFollow: module.exports.WorkspaceFollow, chat, context, opened, views };
+  return {
+    WorkspaceFollow: module.exports.WorkspaceFollow,
+    chat,
+    context,
+    opened,
+    views,
+    vscode,
+    changeWorkspace(path) {
+      vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: path } }];
+      workspaceListener();
+    },
+  };
 }
+
+test("chat changes to the same workspace open it only once", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "vsvibe-same-workspace-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = join(directory, "source");
+  const target = join(directory, "target");
+  await Promise.all([mkdir(source), mkdir(target)]);
+  const fixture = followerFixture(source);
+  let started;
+  let release;
+  const opening = new Promise((resolve) => (started = resolve));
+  const blocked = new Promise((resolve) => (release = resolve));
+  const executeCommand = fixture.vscode.commands.executeCommand;
+  fixture.vscode.commands.executeCommand = async (...args) => {
+    await executeCommand(...args);
+    if (args[0] === "vscode.openFolder") {
+      started();
+      await blocked;
+    }
+  };
+  const paths = { first: source, second: target, third: target };
+  const follower = new fixture.WorkspaceFollow(fixture.chat, fixture.context, (id) => paths[id]);
+  t.after(() => follower.dispose());
+
+  fixture.chat.change("second");
+  await opening;
+  fixture.chat.change("third");
+  release();
+  await new Promise((done) => setTimeout(done, 40));
+  assert.deepEqual(fixture.opened, [await realpath(target)]);
+});
+
+test("later chat events wait for a requested workspace to change", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "vsvibe-requested-workspace-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = join(directory, "source");
+  const target = join(directory, "target");
+  await Promise.all([mkdir(source), mkdir(target)]);
+  const fixture = followerFixture(source);
+  const paths = { first: source, second: target, third: target };
+  const follower = new fixture.WorkspaceFollow(fixture.chat, fixture.context, (id) => paths[id]);
+  t.after(() => follower.dispose());
+
+  fixture.chat.change("second");
+  await new Promise((done) => setTimeout(done, 40));
+  fixture.chat.change("third");
+  await new Promise((done) => setTimeout(done, 40));
+  assert.deepEqual(fixture.opened, [await realpath(target)]);
+
+  fixture.changeWorkspace(target);
+  fixture.changeWorkspace(source);
+  fixture.chat.change("second");
+  await new Promise((done) => setTimeout(done, 40));
+  assert.deepEqual(fixture.opened, [await realpath(target), await realpath(target)]);
+});
 
 test("workspace handoff restores the target's saved activity bar tab", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "vsvibe-sidebar-"));

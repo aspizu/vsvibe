@@ -14,8 +14,10 @@ interface Handoff {
 
 export class WorkspaceFollow implements vscode.Disposable {
   private readonly subscription: vscode.Disposable;
+  private readonly workspaceSubscription: vscode.Disposable;
   private switching = false;
   private pendingId: string | undefined;
+  private requestedPath: string | undefined;
   private disposed = false;
   private generation = 0;
 
@@ -25,6 +27,9 @@ export class WorkspaceFollow implements vscode.Disposable {
     private readonly resolveWorkspace = chatWorkspace,
   ) {
     this.subscription = chat.onDidChange((id) => this.follow(id));
+    this.workspaceSubscription = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      this.requestedPath = undefined;
+    });
     if (chat.id) this.follow(chat.id);
   }
 
@@ -47,6 +52,7 @@ export class WorkspaceFollow implements vscode.Disposable {
     const target = this.resolveWorkspace(id);
     if (!target) return;
     let ownsSwitch = false;
+    let requestedPath: string | undefined;
     try {
       const [currentPath, targetPath, targetStat] = await Promise.all([
         realpath(folders[0].uri.fsPath),
@@ -67,6 +73,7 @@ export class WorkspaceFollow implements vscode.Disposable {
       }
       if (this.disposed || generation !== this.generation) return;
       if (currentPath === targetPath) return;
+      if (this.requestedPath === targetPath) return;
       if (this.switching) return;
       this.switching = true;
       ownsSwitch = true;
@@ -81,10 +88,13 @@ export class WorkspaceFollow implements vscode.Disposable {
         await this.context.globalState.update(handoffKey, undefined);
         return;
       }
+      this.requestedPath = targetPath;
+      requestedPath = targetPath;
       await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(targetPath), {
         forceReuseWindow: true,
       });
     } catch {
+      if (requestedPath && this.requestedPath === requestedPath) this.requestedPath = undefined;
       if (ownsSwitch) await this.context.globalState.update(handoffKey, undefined);
     } finally {
       if (ownsSwitch) {
@@ -99,5 +109,6 @@ export class WorkspaceFollow implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     this.subscription.dispose();
+    this.workspaceSubscription.dispose();
   }
 }
