@@ -504,6 +504,7 @@
     ]
   },
   "activationEvents": [
+    "onFileSystem:vsvibe-diff",
     "onStartupFinished"
   ],
   "extensionKind": [

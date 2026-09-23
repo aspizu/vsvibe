@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, isAbsolute, relative, sep } from "node:path";
-import { stat } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import * as vscode from "vscode";
 import { LastTurnReader, sessionsDirectory, type RecordedChange } from "./last-turn";
 import type { GitAPI } from "./git-api";
@@ -40,7 +41,7 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private readonly repositories = new Map<string, vscode.Disposable>();
   private entries = new Map<string, Entry>();
   private readonly snapshots = new Map<string, string>();
-  private readonly snapshotChanged = new vscode.EventEmitter<vscode.Uri>();
+  private readonly snapshotChanged = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
   private readonly lastTurnEditors = new Map<
     string,
     { left: vscode.Uri; right: vscode.Uri; root: string; path: string; after: string }
@@ -89,10 +90,29 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
           );
         },
       }),
-      vscode.workspace.registerTextDocumentContentProvider("vsvibe-diff", {
-        onDidChange: this.snapshotChanged.event,
-        provideTextDocumentContent: (uri) => this.snapshots.get(uri.toString()) ?? "",
-      }),
+      vscode.workspace.registerFileSystemProvider(
+        "vsvibe-diff",
+        {
+          onDidChangeFile: this.snapshotChanged.event,
+          watch: () => ({ dispose() {} }),
+          stat: (uri) => this.snapshotStat(uri),
+          readDirectory: () => [],
+          readFile: (uri) => this.readSnapshot(uri),
+          createDirectory: (uri) => {
+            throw vscode.FileSystemError.NoPermissions(uri);
+          },
+          writeFile: (uri) => {
+            throw vscode.FileSystemError.NoPermissions(uri);
+          },
+          delete: (uri) => {
+            throw vscode.FileSystemError.NoPermissions(uri);
+          },
+          rename: (uri) => {
+            throw vscode.FileSystemError.NoPermissions(uri);
+          },
+        },
+        { isReadonly: true },
+      ),
       vscode.workspace.onDidCloseTextDocument((document) => {
         this.snapshots.delete(document.uri.toString());
         for (const [id, editor] of this.lastTurnEditors) {
@@ -418,7 +438,42 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
   private updateSnapshot(uri: vscode.Uri, content: string): void {
     if (this.snapshots.get(uri.toString()) === content) return;
     this.snapshots.set(uri.toString(), content);
-    this.snapshotChanged.fire(uri);
+    this.persistSnapshot(uri, content);
+    this.snapshotChanged.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+  }
+
+  private snapshotPath(uri: vscode.Uri): string {
+    const name = createHash("sha256").update(uri.toString()).digest("hex");
+    return join(this.context.globalStorageUri.fsPath, "review-snapshots", name);
+  }
+
+  private persistSnapshot(uri: vscode.Uri, content: string): void {
+    const path = this.snapshotPath(uri);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
+
+  private async snapshotStat(uri: vscode.Uri): Promise<vscode.FileStat> {
+    if (!uri.query) return { type: vscode.FileType.Directory, ctime: 0, mtime: 0, size: 0 };
+    try {
+      const info = await stat(this.snapshotPath(uri));
+      return {
+        type: vscode.FileType.File,
+        ctime: info.ctimeMs,
+        mtime: info.mtimeMs,
+        size: info.size,
+      };
+    } catch {
+      throw vscode.FileSystemError.FileNotFound(uri);
+    }
+  }
+
+  private async readSnapshot(uri: vscode.Uri): Promise<Uint8Array> {
+    try {
+      return await readFile(this.snapshotPath(uri));
+    } catch {
+      throw vscode.FileSystemError.FileNotFound(uri);
+    }
   }
 
   private async loadChanges(generation: number, mode: Mode): Promise<void> {
@@ -494,7 +549,10 @@ export class ChangesView implements vscode.TreeDataProvider<ReviewNode>, vscode.
       .digest("hex");
     const uri = vscode.Uri.from({ scheme: "vsvibe-diff", path: `/${path}`, query });
     if (live) this.updateSnapshot(uri, content);
-    else this.snapshots.set(uri.toString(), content);
+    else {
+      this.snapshots.set(uri.toString(), content);
+      this.persistSnapshot(uri, content);
+    }
     return uri;
   }
 

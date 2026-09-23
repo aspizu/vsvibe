@@ -25,3 +25,5 @@ Requires VS Code 1.110 or later and Git.
 The download always contains the latest successful build. To update, download it again and repeat the installation steps.
 
 Open a Git project in VS Code, select **Review** in the activity bar, and choose a scope. **Last Turn** uses local Codex session history.
+
+On macOS, VSVibe polls the main T3 Code (Alpha) window every 500 ms for its active chat ID. A VS Code window with one local workspace folder follows chat switches as soon as the poll detects them, whether the folder is a T3 worktree or a project root. The workspace path comes from T3's local chat state. This needs Swift and Accessibility access for VS Code. Other extensions can read the current ID with the `vsvibe.getActiveChatId` command; it returns `undefined` when no T3 chat is open.

@@ -3,3 +3,4 @@
 !README.vscode.md
 !dist/**/*.js
 !media/**
+!native/*.swift

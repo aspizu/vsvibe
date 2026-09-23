@@ -1,7 +1,9 @@
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
+const { mkdtemp, rm } = require("node:fs/promises");
 const { createRequire } = require("node:module");
-const { resolve } = require("node:path");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
 const { test } = require("node:test");
 const { runInNewContext } = require("node:vm");
 
@@ -49,6 +51,11 @@ function fixture(mode = "branch", status = "M") {
     },
     TabInputTextDiff,
     TabInputText,
+    FileChangeType: { Changed: 1 },
+    FileType: { File: 1, Directory: 2 },
+    FileSystemError: {
+      FileNotFound: (uri) => new Error(`File not found: ${uri.toString()}`),
+    },
     window: {
       tabGroups,
       withProgress: async (_options, task) => task(),
@@ -107,7 +114,8 @@ function fixture(mode = "branch", status = "M") {
       ],
     ]),
     snapshots: new Map(),
-    snapshotChanged: { fire: (uri) => updates.push(uri.toString()) },
+    snapshotChanged: { fire: (changes) => updates.push(changes[0].uri.toString()) },
+    persistSnapshot() {},
     lastTurnEditors: new Map(),
     openingDiffs: new Map(),
   });
@@ -127,6 +135,27 @@ function fixture(mode = "branch", status = "M") {
     },
   };
 }
+
+test("virtual diff content survives a new extension instance", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "vsvibe-snapshots-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { view } = fixture();
+  const uri = { query: "version", toString: () => "vsvibe-diff:/file.txt?version" };
+  view.context = { globalStorageUri: { fsPath: directory } };
+  delete view.persistSnapshot;
+  view.persistSnapshot(uri, "saved diff\n");
+  view.snapshots.clear();
+  const reloaded = Object.create(Object.getPrototypeOf(view));
+  reloaded.context = view.context;
+  assert.equal(Buffer.from(await reloaded.readSnapshot(uri)).toString(), "saved diff\n");
+  assert.equal((await reloaded.snapshotStat(uri)).size, Buffer.byteLength("saved diff\n"));
+});
+
+test("Review opens individual diffs as previews", async () => {
+  const { view, previews } = fixture();
+  await view.openDiff("file");
+  assert.deepEqual(previews, [true]);
+});
 
 test("review finder searches scope paths and opens only the accepted item", async () => {
   const { view, window, calls } = fixture();

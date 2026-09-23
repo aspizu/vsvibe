@@ -1,8 +1,19 @@
 import * as vscode from "vscode";
+import { ActiveChat } from "./active-chat";
 import type { GitExtension } from "./git-api";
 import { ChangesView } from "./view";
+import { WorkspaceFollow } from "./workspace-follow";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const activeChat = new ActiveChat(context);
+  context.subscriptions.push(
+    activeChat,
+    new WorkspaceFollow(activeChat, context),
+    activeChat.onDidChange((id) => {
+      void vscode.commands.executeCommand("setContext", "vsvibe.activeChatId", id);
+    }),
+    vscode.commands.registerCommand("vsvibe.getActiveChatId", () => activeChat.id),
+  );
   const view = new ChangesView(context);
   context.subscriptions.push(view);
   for (const mode of ["lastTurn", "uncommitted", "unstaged", "staged", "branch"] as const) {
